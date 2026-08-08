@@ -27,7 +27,7 @@ Implement legal move generation for the current player in the checkers rules eng
 
 ## Expected files or areas
 
-- `packages/game-engine/`
+- `apps/server/game-engine/`
 - related tests in the same package/module
 
 ## Implementation notes

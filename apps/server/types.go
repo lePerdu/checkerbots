@@ -1,5 +1,7 @@
 package boardmodel
 
+import "time"
+
 // CoordinateFrame names the frame a pose is expressed in.
 type CoordinateFrame string
 
@@ -50,4 +52,23 @@ type BoardCalibration struct {
 	SquareSizeMM float64 `json:"square_size_mm"`
 	Columns      int     `json:"columns"`
 	Rows         int     `json:"rows"`
+}
+
+// PieceAssignmentState tracks whether a logical piece currently has a robot.
+type PieceAssignmentState string
+
+const (
+	PieceAssignmentStateAssigned   PieceAssignmentState = "assigned"
+	PieceAssignmentStateUnassigned PieceAssignmentState = "unassigned"
+)
+
+// PieceAssignment links a logical game piece to the robot currently acting as it.
+//
+// RobotID is omitted when a piece is not assigned.
+type PieceAssignment struct {
+	GameID    string               `json:"game_id"`
+	PieceID   string               `json:"piece_id"`
+	RobotID   string               `json:"robot_id,omitempty"`
+	State     PieceAssignmentState `json:"state"`
+	UpdatedAt time.Time            `json:"updated_at"`
 }

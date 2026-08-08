@@ -4,6 +4,7 @@
 - Be brief in responses.
 
 ## Coding approach
+- Don't split code into separate modules until there is a concrete need to share it across modules.
 - Prefer some code duplication over making premature abstractions.
 
 ## Documentation

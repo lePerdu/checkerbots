@@ -19,6 +19,7 @@ coverage.out
 # Editor / OS files
 .DS_Store
 Thumbs.db
+.Trash-*/
 
 # Zed / workspace-local files
 .zed/

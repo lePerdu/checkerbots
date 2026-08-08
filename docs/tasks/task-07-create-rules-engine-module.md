@@ -26,7 +26,7 @@ Create the initial rules engine module/package structure where checkers game log
 
 ## Expected files or areas
 
-- `packages/game-engine/`
+- `apps/server/game-engine/`
 
 ## Implementation notes
 

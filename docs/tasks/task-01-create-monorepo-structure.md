@@ -34,8 +34,8 @@ Create the initial top-level directory structure and any minimal placeholder fil
   - `apps/server/`
   - `apps/web/`
   - `apps/sim-robot/`
-  - `packages/protocol/`
-  - `packages/game-engine/`
+  - `packages/robo-proto/`
+  - `apps/server/game-engine/`
   - `packages/board-model/`
 
 ## Implementation notes

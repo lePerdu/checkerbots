@@ -27,11 +27,11 @@ Create a first-pass shared robot protocol specification for server-to-robot and 
 
 ## Expected files or areas
 
-- `packages/protocol/`
+- `packages/robo-proto/`
 - and/or `docs/`
 - Suggested files:
   - `docs/protocol-v0.md`
-  - `packages/protocol/...`
+  - `packages/robo-proto/...`
 
 ## Implementation notes
 

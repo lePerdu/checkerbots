@@ -6,7 +6,7 @@ The UI and robot/simulator flows need realtime updates for status changes and mo
 
 Relevant docs:
 - `docs/epics-and-issues.md`
-- existing server scaffold and shared protocol/types
+- existing server scaffold and shared robo-proto/types
 
 ## Goal
 
@@ -29,7 +29,7 @@ Add a basic WebSocket layer to the coordination server for publishing game and r
 ## Expected files or areas
 
 - `apps/server/`
-- possibly shared types under `packages/protocol/`
+- possibly shared types under `packages/robo-proto/`
 
 ## Implementation notes
 

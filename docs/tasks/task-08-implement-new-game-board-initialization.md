@@ -27,7 +27,7 @@ Implement `newGame()` for standard checkers and add tests for the initial arrang
 
 ## Expected files or areas
 
-- `packages/game-engine/`
+- `apps/server/game-engine/`
 - related tests in the same package/module
 
 ## Implementation notes

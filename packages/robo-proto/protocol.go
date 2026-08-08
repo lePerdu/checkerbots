@@ -38,7 +38,7 @@
 //   - SetPoseCommand updates believed pose and does not imply movement
 //   - server policies like one-moving-robot-at-a-time belong in the coordinator,
 //     not in the wire protocol
-package protocol
+package roboproto
 
 import "time"
 

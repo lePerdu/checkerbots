@@ -6,7 +6,7 @@ The coordination server needs to track connected robots, their latest status, an
 
 Relevant docs:
 - `docs/epics-and-issues.md`
-- existing protocol/shared types and server scaffold
+- existing robo-proto/shared types and server scaffold
 
 ## Goal
 

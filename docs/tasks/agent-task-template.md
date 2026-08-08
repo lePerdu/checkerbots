@@ -31,7 +31,7 @@ List the files, directories, or modules the agent should expect to touch.
 
 Examples:
 - `apps/server/`
-- `packages/game-engine/`
+- `apps/server/game-engine/`
 - `docs/`
 
 ## Implementation notes

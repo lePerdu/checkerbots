@@ -44,7 +44,7 @@ Define the board coordinate model for square naming and physical coordinate mapp
 
 ## Validation
 
-- Review for consistency with protocol/shared types.
+- Review for consistency with robo-proto/shared types.
 - If code is added, ensure it type-checks.
 
 ## Deliverables
