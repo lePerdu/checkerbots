@@ -26,7 +26,9 @@ Define the first version of shared types for games, robots, poses, calibration, 
 
 ## Expected files or areas
 
-- `packages/protocol/`
+- `packages/board-model/`
+- `packages/game-engine/`
+- Possibly `packages/protocol/`
 - Optional supporting docs under `docs/`
 
 ## Implementation notes
@@ -34,6 +36,7 @@ Define the first version of shared types for games, robots, poses, calibration, 
 - Keep the types practical for both server and UI consumption.
 - Prefer minimal but extensible shapes.
 - Be consistent with the shared protocol task.
+- Keep board and game-related concepts out of `packages/protocol/`
 
 ## Acceptance criteria
 

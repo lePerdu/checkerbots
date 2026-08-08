@@ -26,7 +26,7 @@
 //   - IDs are opaque strings; UUIDs are recommended
 //   - physical distances are millimeters
 //   - heading angles are radians
-//   - world poses are in the board/world frame unless another frame is named
+//   - poses are expressed in a named coordinate frame when provided
 //
 // Behavioral notes:
 //   - robots should send HelloMessage immediately after connecting
@@ -41,16 +41,6 @@
 package protocol
 
 import "time"
-
-type CoordinateFrame string
-
-const (
-	CoordinateFrameBoard CoordinateFrame = "board"
-	CoordinateFrameWorld CoordinateFrame = "world"
-)
-
-// DefaultPoseFrame is the recommended default frame for v0 pose messages.
-const DefaultPoseFrame CoordinateFrame = CoordinateFrameBoard
 
 type ProtocolVersion string
 
@@ -71,22 +61,20 @@ const (
 )
 
 const (
-	CommandTypeIdentify     CommandType = "identify"
-	CommandTypeStop         CommandType = "stop"
-	CommandTypeMoveToSquare CommandType = "move_to_square"
-	CommandTypeMoveToPose   CommandType = "move_to_pose"
-	CommandTypeSetPose      CommandType = "set_pose"
-	CommandTypePing         CommandType = "ping"
+	CommandTypeIdentify   CommandType = "identify"
+	CommandTypeStop       CommandType = "stop"
+	CommandTypeMoveToPose CommandType = "move_to_pose"
+	CommandTypeSetPose    CommandType = "set_pose"
+	CommandTypePing       CommandType = "ping"
 )
 
 const (
 	// Server-to-robot command message types exposed as message types for envelope discrimination.
-	MessageTypeIdentify     MessageType = MessageType(CommandTypeIdentify)
-	MessageTypeStop         MessageType = MessageType(CommandTypeStop)
-	MessageTypeMoveToSquare MessageType = MessageType(CommandTypeMoveToSquare)
-	MessageTypeMoveToPose   MessageType = MessageType(CommandTypeMoveToPose)
-	MessageTypeSetPose      MessageType = MessageType(CommandTypeSetPose)
-	MessageTypePing         MessageType = MessageType(CommandTypePing)
+	MessageTypeIdentify   MessageType = MessageType(CommandTypeIdentify)
+	MessageTypeStop       MessageType = MessageType(CommandTypeStop)
+	MessageTypeMoveToPose MessageType = MessageType(CommandTypeMoveToPose)
+	MessageTypeSetPose    MessageType = MessageType(CommandTypeSetPose)
+	MessageTypePing       MessageType = MessageType(CommandTypePing)
 )
 
 type RobotKind string
@@ -169,15 +157,13 @@ type CommandEnvelope struct {
 	CommandID string `json:"command_id"`
 }
 
-// Pose is a world or board pose expressed in millimeters and radians.
+// Pose is a transport-level pose expressed in millimeters and radians.
 //
 // Frame is optional on the wire. v0 implementations should default it to
-// DefaultPoseFrame when omitted.
 type Pose struct {
-	XMM      float64         `json:"x_mm"`
-	YMM      float64         `json:"y_mm"`
-	ThetaRad float64         `json:"theta_rad"`
-	Frame    CoordinateFrame `json:"frame,omitempty"`
+	XMM      float64 `json:"x_mm"`
+	YMM      float64 `json:"y_mm"`
+	ThetaRad float64 `json:"theta_rad"`
 }
 
 // TelemetrySnapshot is the intentionally small, generic v0 telemetry shape.
@@ -221,7 +207,8 @@ type TelemetryMessage struct {
 
 // PoseUpdateMessage reports the robot's latest pose estimate.
 //
-// Confidence is expected to be in the range [0.0, 1.0].
+// When Confidence is present inside Pose, it is expected to be in the range
+// [0.0, 1.0].
 type PoseUpdateMessage struct {
 	Envelope
 	Pose       Pose       `json:"pose"`
@@ -266,17 +253,7 @@ type StopCommand struct {
 	Reason string `json:"reason,omitempty"`
 }
 
-// MoveToSquareCommand asks the robot to move to a named board square.
-//
-// Canonical square names use lowercase algebraic coordinates such as a1 through h8.
-type MoveToSquareCommand struct {
-	CommandEnvelope
-	Square              string   `json:"square"`
-	HeadingRad          *float64 `json:"heading_rad,omitempty"`
-	PositionToleranceMM *float64 `json:"position_tolerance_mm,omitempty"`
-}
-
-// MoveToPoseCommand asks the robot to move to an explicit world or board pose.
+// MoveToPoseCommand asks the robot to move to an explicit pose.
 type MoveToPoseCommand struct {
 	CommandEnvelope
 	Pose                Pose     `json:"pose"`

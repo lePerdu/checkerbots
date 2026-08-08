@@ -2,6 +2,8 @@
 
 This package defines the shared robot protocol messages used by the server, simulator, and future robot adapters.
 
+This protocol shouldn't contain game and board-related concepts: it mainly concerns robot setup and motion.
+
 Current contents:
 - `protocol.go` - Go structs, constants, and package/type documentation for protocol v0
 
