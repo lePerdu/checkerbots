@@ -34,8 +34,6 @@ This document turns the high-level project vision into a concrete, phased backlo
 
 - [ ] Create monorepo structure for `apps`, `packages`, and `docs`.
 - [ ] Choose primary stack for server and UI.
-  - Recommended default: `React + TypeScript` for UI.
-  - Recommended default: `TypeScript` or `Python` for server.
 - [ ] Write an architecture overview document.
 - [ ] Define the main system boundaries:
   - coordination server

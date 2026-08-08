@@ -1,18 +1,6 @@
 package gameengine
 
-import "time"
-
-// GameStatus summarizes lifecycle state for the single active game MVP.
-type GameStatus string
-
-const (
-	GameStatusSetup    GameStatus = "setup"
-	GameStatusActive   GameStatus = "active"
-	GameStatusFinished GameStatus = "finished"
-	GameStatusAborted  GameStatus = "aborted"
-)
-
-// PlayerSide identifies which player or team a piece belongs to.
+// PlayerSide identifies which player a piece belongs to.
 type PlayerSide string
 
 const (
@@ -20,7 +8,7 @@ const (
 	PlayerSideBlack PlayerSide = "black"
 )
 
-// PieceKind models the current MVP need for standard checkers pieces and kings.
+// PieceKind models a standard piece or a king.
 type PieceKind string
 
 const (
@@ -28,28 +16,47 @@ const (
 	PieceKindKing PieceKind = "king"
 )
 
-// Piece represents one logical game piece on the board.
-type Piece struct {
-	ID       string     `json:"id"`
-	Side     PlayerSide `json:"side"`
-	Kind     PieceKind  `json:"kind"`
-	Row      int        `json:"row"`
-	Col      int        `json:"col"`
-	Captured bool       `json:"captured"`
+// Position identifies a square on the board using zero-based row and column indices.
+// (0,0) is the bottom-left corner of the black side.
+type Position struct {
+	Row int
+	Col int
 }
 
-// Game is the shared server/UI view of a single checkers game.
+// Piece represents one logical checkers piece.
+type Piece struct {
+	ID       string
+	Side     PlayerSide
+	Kind     PieceKind
+	Position Position
+	Captured bool
+}
+
+// Move represents a single move from one square to another.
 //
-// The shape is intentionally single-game friendly for MVP use, while Kind and
-// Status leave room for future extension if the project later supports more
-// than one game type or richer lifecycle handling.
+// The shape is intentionally small for now. Later tasks can extend it with
+// captures, multi-jump paths, promotion metadata, or validation details.
+type Move struct {
+	From Position
+	To   Position
+}
+
+// Game holds the rules-engine-owned game state.
+//
+// Board is included as an explicit future home for square occupancy, while Pieces
+// keeps the initial API simple and easy to evolve in subsequent tasks.
 type Game struct {
-	ID        string      `json:"id"`
-	Status    GameStatus  `json:"status"`
-	Turn      PlayerSide  `json:"turn"`
-	Pieces    []Piece     `json:"pieces"`
-	MoveCount int         `json:"move_count"`
-	Winner    *PlayerSide `json:"winner,omitempty"`
-	CreatedAt time.Time   `json:"created_at"`
-	UpdatedAt time.Time   `json:"updated_at"`
+	Turn        PlayerSide
+	BoardSize   int
+	Pieces      []Piece
+	MoveHistory []Move
+	// `nil` if game is in-progress
+	GameOver *GameOver
+}
+
+// GameOver summarizes terminal-game evaluation without committing future tasks to
+// a richer result model yet.
+type GameOver struct {
+	Winner PlayerSide
+	Reason string
 }
