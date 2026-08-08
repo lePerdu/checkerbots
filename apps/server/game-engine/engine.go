@@ -1,15 +1,55 @@
 package gameengine
 
-// NewGame creates an empty, active game state scaffold ready for later rules work.
-//
-// Later tasks will populate the starting board and piece layout.
+import "strconv"
+
+// NewGame creates a standard starting game state for checkers.
 func NewGame() Game {
+	pieces := make([]Piece, 0, 24)
+
+	pieceIndex := 0
+	for row := 0; row < 3; row++ {
+		for col := 0; col < 8; col++ {
+			if (row+col)%2 != 0 {
+				continue
+			}
+
+			pieces = append(pieces, Piece{
+				ID:       pieceID(PlayerSideBlack, pieceIndex),
+				Side:     PlayerSideBlack,
+				Kind:     PieceKindMan,
+				Position: Position{Row: row, Col: col},
+			})
+			pieceIndex++
+		}
+	}
+
+	pieceIndex = 0
+	for row := 5; row < 8; row++ {
+		for col := 0; col < 8; col++ {
+			if (row+col)%2 != 0 {
+				continue
+			}
+
+			pieces = append(pieces, Piece{
+				ID:       pieceID(PlayerSideRed, pieceIndex),
+				Side:     PlayerSideRed,
+				Kind:     PieceKindMan,
+				Position: Position{Row: row, Col: col},
+			})
+			pieceIndex++
+		}
+	}
+
 	return Game{
 		Turn:        PlayerSideBlack,
 		BoardSize:   8,
-		Pieces:      []Piece{},
+		Pieces:      pieces,
 		MoveHistory: []Move{},
 	}
+}
+
+func pieceID(side PlayerSide, index int) string {
+	return string(side) + "-" + strconv.Itoa(index+1)
 }
 
 // GetLegalMoves returns the legal moves for the current player.
