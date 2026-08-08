@@ -1,0 +1,27 @@
+# Go build outputs
+bin/
+dist/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Go test / coverage
+*.test
+coverage.out
+*.coverprofile
+
+# Environment files
+.env
+.env.*
+
+# Editor / OS files
+.DS_Store
+Thumbs.db
+
+# Zed / workspace-local files
+.zed/
+
+# Dev container local state
+.devcontainer/.cache/

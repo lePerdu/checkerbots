@@ -1,0 +1,18 @@
+{
+  "name": "checkerbots",
+  "image": "mcr.microsoft.com/devcontainers/go:1-1.24-bookworm",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "golang.Go"
+      ],
+      "settings": {
+        "go.useLanguageServer": true,
+        "editor.formatOnSave": true,
+        "files.insertFinalNewline": true
+      }
+    }
+  },
+  "postCreateCommand": "go version && golangci-lint version",
+  "remoteUser": "vscode"
+}
