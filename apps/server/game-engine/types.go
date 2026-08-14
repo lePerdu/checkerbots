@@ -32,13 +32,23 @@ type Piece struct {
 	Captured bool
 }
 
-// Move represents a single move from one square to another.
+// Move represents a move path as an ordered list of visited positions.
 //
-// The shape is intentionally small for now. Later tasks can extend it with
-// captures, multi-jump paths, promotion metadata, or validation details.
-type Move struct {
-	From Position
-	To   Position
+// Current rules support only single-step and single-jump moves, so valid moves
+// are expected to contain exactly two positions for now.
+type Move []Position
+
+// ApplyMoveError describes why a move could not be applied.
+type ApplyMoveError struct {
+	Reason string
+}
+
+// Error implements the error interface.
+func (e *ApplyMoveError) Error() string {
+	if e == nil {
+		return ""
+	}
+	return e.Reason
 }
 
 // Game holds the rules-engine-owned game state.

@@ -88,10 +88,7 @@ func getNonJumpMoves(game Game) []Move {
 				continue
 			}
 
-			moves = append(moves, Move{
-				From: piece.Position,
-				To:   destination,
-			})
+			moves = append(moves, Move{piece.Position, destination})
 		}
 	}
 
@@ -99,9 +96,13 @@ func getNonJumpMoves(game Game) []Move {
 }
 
 func getBoardCache(game Game) BoardCache {
+	return getBoardCacheFromPieces(game.Pieces)
+}
+
+func getBoardCacheFromPieces(pieces []Piece) BoardCache {
 	board := BoardCache{}
-	for i := range game.Pieces {
-		piece := &game.Pieces[i]
+	for i := range pieces {
+		piece := &pieces[i]
 		if piece.Captured {
 			continue
 		}
@@ -146,10 +147,7 @@ func getJumpMoves(game Game) []Move {
 		}
 
 		for _, dest := range getJumpStepsForPiece(game, board, piece) {
-			moves = append(moves, Move{
-				From: piece.Position,
-				To:   dest,
-			})
+			moves = append(moves, Move{piece.Position, dest})
 		}
 	}
 
@@ -183,11 +181,123 @@ func isInsideBoard(position Position, boardSize int) bool {
 	return position.Row >= 0 && position.Row < boardSize && position.Col >= 0 && position.Col < boardSize
 }
 
-// ApplyMove applies a move and returns the updated game state.
+// ApplyMove applies a legal move in place.
 //
-// This placeholder returns the game unchanged until move validation and board
-// mutation are implemented.
-func ApplyMove(game Game, move Move) Game {
-	_ = move
-	return game
+// It returns nil when the move was applied. Invalid moves return an
+// ApplyMoveError describing the reason. This implementation supports simple
+// diagonal moves and single-jump captures. Multi-jump sequences, forced-capture
+// enforcement, promotion, and terminal-state evaluation are deferred.
+func ApplyMove(game *Game, move Move) *ApplyMoveError {
+	if game == nil {
+		return &ApplyMoveError{Reason: "game is nil"}
+	}
+	if game.GameOver != nil {
+		return &ApplyMoveError{Reason: "game is over"}
+	}
+	if len(move) != 2 {
+		return &ApplyMoveError{Reason: "move must contain exactly 2 positions"}
+	}
+
+	from := move[0]
+	to := move[1]
+
+	updatedPieces := append([]Piece(nil), game.Pieces...)
+	pieceIndex := findActivePieceAt(updatedPieces, from)
+	if pieceIndex == -1 {
+		return &ApplyMoveError{Reason: "no active piece at move origin"}
+	}
+
+	piece := updatedPieces[pieceIndex]
+	if piece.Side != game.Turn {
+		return &ApplyMoveError{Reason: "piece does not belong to current player"}
+	}
+
+	if !isInsideBoard(from, game.BoardSize) || !isInsideBoard(to, game.BoardSize) {
+		return &ApplyMoveError{Reason: "move is outside the board"}
+	}
+
+	board := getBoardCacheFromPieces(updatedPieces)
+	if _, occupied := board[to]; occupied {
+		return &ApplyMoveError{Reason: "destination is occupied"}
+	}
+
+	deltaRow := to.Row - from.Row
+	deltaCol := to.Col - from.Col
+	absRow := abs(deltaRow)
+	absCol := abs(deltaCol)
+
+	if absRow != absCol || (absRow != 1 && absRow != 2) {
+		return &ApplyMoveError{Reason: "move must be a diagonal step or jump"}
+	}
+
+	if !canPieceMoveBy(piece, deltaRow, deltaCol) {
+		return &ApplyMoveError{Reason: "piece cannot move in that direction"}
+	}
+
+	if absRow == 2 {
+		middle := Position{
+			Row: from.Row + deltaRow/2,
+			Col: from.Col + deltaCol/2,
+		}
+		capturedIndex := findActivePieceAt(updatedPieces, middle)
+		if capturedIndex == -1 {
+			return &ApplyMoveError{Reason: "jump requires a piece to capture"}
+		}
+		if updatedPieces[capturedIndex].Side == piece.Side {
+			return &ApplyMoveError{Reason: "cannot capture your own piece"}
+		}
+		updatedPieces[capturedIndex].Captured = true
+	}
+
+	updatedPieces[pieceIndex].Position = to
+	game.Pieces = updatedPieces
+	game.Turn = otherSide(game.Turn)
+	game.MoveHistory = append(game.MoveHistory, append(Move(nil), move...))
+
+	return nil
+}
+
+func findActivePieceAt(pieces []Piece, position Position) int {
+	for i, piece := range pieces {
+		if piece.Captured {
+			continue
+		}
+		if piece.Position == position {
+			return i
+		}
+	}
+	return -1
+}
+
+func canPieceMoveBy(piece Piece, deltaRow int, deltaCol int) bool {
+	if abs(deltaRow) != abs(deltaCol) {
+		return false
+	}
+
+	if piece.Kind == PieceKindKing {
+		return abs(deltaRow) == 1 || abs(deltaRow) == 2
+	}
+
+	switch piece.Side {
+	case PlayerSideBlack:
+		return deltaRow == 1 || deltaRow == 2
+	case PlayerSideRed:
+		return deltaRow == -1 || deltaRow == -2
+	default:
+		return false
+	}
+}
+
+func otherSide(side PlayerSide) PlayerSide {
+	if side == PlayerSideBlack {
+		return PlayerSideRed
+	}
+	return PlayerSideBlack
+}
+
+func abs(value int) int {
+	if value < 0 {
+		return -value
+	}
+	return value
 }

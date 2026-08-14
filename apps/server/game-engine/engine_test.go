@@ -1,9 +1,6 @@
 package gameengine
 
-import (
-	"reflect"
-	"testing"
-)
+import "testing"
 
 func TestNewGameReturnsStandardStartingBoard(t *testing.T) {
 	game := NewGame()
@@ -118,30 +115,17 @@ func TestNewGameReturnsStandardStartingBoard(t *testing.T) {
 func TestGetLegalMovesReturnsSimpleOpeningMovesForBlack(t *testing.T) {
 	moves := GetLegalMoves(NewGame())
 
-	expected := map[Move]bool{
-		{From: Position{Row: 2, Col: 0}, To: Position{Row: 3, Col: 1}}: true,
-		{From: Position{Row: 2, Col: 2}, To: Position{Row: 3, Col: 1}}: true,
-		{From: Position{Row: 2, Col: 2}, To: Position{Row: 3, Col: 3}}: true,
-		{From: Position{Row: 2, Col: 4}, To: Position{Row: 3, Col: 3}}: true,
-		{From: Position{Row: 2, Col: 4}, To: Position{Row: 3, Col: 5}}: true,
-		{From: Position{Row: 2, Col: 6}, To: Position{Row: 3, Col: 5}}: true,
-		{From: Position{Row: 2, Col: 6}, To: Position{Row: 3, Col: 7}}: true,
+	expected := []Move{
+		{{Row: 2, Col: 0}, {Row: 3, Col: 1}},
+		{{Row: 2, Col: 2}, {Row: 3, Col: 1}},
+		{{Row: 2, Col: 2}, {Row: 3, Col: 3}},
+		{{Row: 2, Col: 4}, {Row: 3, Col: 3}},
+		{{Row: 2, Col: 4}, {Row: 3, Col: 5}},
+		{{Row: 2, Col: 6}, {Row: 3, Col: 5}},
+		{{Row: 2, Col: 6}, {Row: 3, Col: 7}},
 	}
 
-	if len(moves) != len(expected) {
-		t.Fatalf("expected %d moves, got %d: %+v", len(expected), len(moves), moves)
-	}
-
-	for _, move := range moves {
-		if !expected[move] {
-			t.Fatalf("unexpected move returned: %+v", move)
-		}
-		delete(expected, move)
-	}
-
-	if len(expected) != 0 {
-		t.Fatalf("expected moves not returned: %+v", expected)
-	}
+	assertMovesEqual(t, moves, expected)
 }
 
 func TestGetLegalMovesReturnsSimpleMovesForRedTurn(t *testing.T) {
@@ -150,30 +134,17 @@ func TestGetLegalMovesReturnsSimpleMovesForRedTurn(t *testing.T) {
 
 	moves := GetLegalMoves(game)
 
-	expected := map[Move]bool{
-		{From: Position{Row: 5, Col: 1}, To: Position{Row: 4, Col: 0}}: true,
-		{From: Position{Row: 5, Col: 1}, To: Position{Row: 4, Col: 2}}: true,
-		{From: Position{Row: 5, Col: 3}, To: Position{Row: 4, Col: 2}}: true,
-		{From: Position{Row: 5, Col: 3}, To: Position{Row: 4, Col: 4}}: true,
-		{From: Position{Row: 5, Col: 5}, To: Position{Row: 4, Col: 4}}: true,
-		{From: Position{Row: 5, Col: 5}, To: Position{Row: 4, Col: 6}}: true,
-		{From: Position{Row: 5, Col: 7}, To: Position{Row: 4, Col: 6}}: true,
+	expected := []Move{
+		{{Row: 5, Col: 1}, {Row: 4, Col: 0}},
+		{{Row: 5, Col: 1}, {Row: 4, Col: 2}},
+		{{Row: 5, Col: 3}, {Row: 4, Col: 2}},
+		{{Row: 5, Col: 3}, {Row: 4, Col: 4}},
+		{{Row: 5, Col: 5}, {Row: 4, Col: 4}},
+		{{Row: 5, Col: 5}, {Row: 4, Col: 6}},
+		{{Row: 5, Col: 7}, {Row: 4, Col: 6}},
 	}
 
-	if len(moves) != len(expected) {
-		t.Fatalf("expected %d moves, got %d: %+v", len(expected), len(moves), moves)
-	}
-
-	for _, move := range moves {
-		if !expected[move] {
-			t.Fatalf("unexpected move returned: %+v", move)
-		}
-		delete(expected, move)
-	}
-
-	if len(expected) != 0 {
-		t.Fatalf("expected moves not returned: %+v", expected)
-	}
+	assertMovesEqual(t, moves, expected)
 }
 
 func TestGetLegalMovesSkipsBlockedAndCapturedPieces(t *testing.T) {
@@ -207,36 +178,166 @@ func TestGetLegalMovesIncludesBackwardMovesForKings(t *testing.T) {
 
 	moves := GetLegalMoves(game)
 
-	expected := map[Move]bool{
-		{From: Position{Row: 3, Col: 3}, To: Position{Row: 2, Col: 2}}: true,
-		{From: Position{Row: 3, Col: 3}, To: Position{Row: 2, Col: 4}}: true,
-		{From: Position{Row: 3, Col: 3}, To: Position{Row: 4, Col: 2}}: true,
-		{From: Position{Row: 3, Col: 3}, To: Position{Row: 4, Col: 4}}: true,
+	expected := []Move{
+		{{Row: 3, Col: 3}, {Row: 2, Col: 2}},
+		{{Row: 3, Col: 3}, {Row: 2, Col: 4}},
+		{{Row: 3, Col: 3}, {Row: 4, Col: 2}},
+		{{Row: 3, Col: 3}, {Row: 4, Col: 4}},
 	}
 
-	if len(moves) != len(expected) {
-		t.Fatalf("expected %d moves, got %d: %+v", len(expected), len(moves), moves)
+	assertMovesEqual(t, moves, expected)
+}
+
+func TestApplyMoveMovesPieceAndAdvancesTurn(t *testing.T) {
+	game := NewGame()
+	move := Move{{Row: 2, Col: 0}, {Row: 3, Col: 1}}
+
+	err := ApplyMove(&game, move)
+	if err != nil {
+		t.Fatalf("expected move to be applied, got error: %v", err)
 	}
 
-	for _, move := range moves {
-		if !expected[move] {
-			t.Fatalf("unexpected move returned: %+v", move)
+	if game.Turn != PlayerSideRed {
+		t.Fatalf("expected turn %q after move, got %q", PlayerSideRed, game.Turn)
+	}
+
+	if len(game.MoveHistory) != 1 {
+		t.Fatalf("expected 1 move in history, got %d", len(game.MoveHistory))
+	}
+
+	assertMoveEqual(t, game.MoveHistory[0], move)
+
+	foundDestination := false
+	foundOrigin := false
+	for _, piece := range game.Pieces {
+		if piece.Captured {
+			continue
 		}
-		delete(expected, move)
+		if piece.Position == move[1] && piece.Side == PlayerSideBlack {
+			foundDestination = true
+		}
+		if piece.Position == move[0] {
+			foundOrigin = true
+		}
 	}
 
-	if len(expected) != 0 {
-		t.Fatalf("expected moves not returned: %+v", expected)
+	if !foundDestination {
+		t.Fatalf("expected moved black piece at %+v", move[1])
+	}
+
+	if foundOrigin {
+		t.Fatalf("expected no active piece to remain at %+v after move", move[0])
 	}
 }
 
-func TestApplyMoveReturnsGameUnchangedForPlaceholder(t *testing.T) {
-	game := NewGame()
-	move := Move{From: Position{Row: 2, Col: 1}, To: Position{Row: 3, Col: 0}}
-
-	updated := ApplyMove(game, move)
-
-	if !reflect.DeepEqual(updated, game) {
-		t.Fatalf("expected placeholder ApplyMove to return the input game unchanged")
+func TestApplyMoveCapturesOpponentPiece(t *testing.T) {
+	game := Game{
+		Turn:      PlayerSideBlack,
+		BoardSize: 8,
+		Pieces: []Piece{
+			{ID: "black-1", Side: PlayerSideBlack, Kind: PieceKindMan, Position: Position{Row: 2, Col: 0}},
+			{ID: "red-1", Side: PlayerSideRed, Kind: PieceKindMan, Position: Position{Row: 3, Col: 1}},
+		},
+		MoveHistory: []Move{},
 	}
+	move := Move{{Row: 2, Col: 0}, {Row: 4, Col: 2}}
+
+	err := ApplyMove(&game, move)
+	if err != nil {
+		t.Fatalf("expected capture move to be applied, got error: %v", err)
+	}
+
+	if game.Turn != PlayerSideRed {
+		t.Fatalf("expected turn %q after capture, got %q", PlayerSideRed, game.Turn)
+	}
+
+	if len(game.MoveHistory) != 1 {
+		t.Fatalf("expected capture move to be appended to history, got %+v", game.MoveHistory)
+	}
+	assertMoveEqual(t, game.MoveHistory[0], move)
+
+	for _, piece := range game.Pieces {
+		switch piece.ID {
+		case "black-1":
+			if piece.Position != move[1] {
+				t.Fatalf("expected capturing piece at %+v, got %+v", move[1], piece.Position)
+			}
+		case "red-1":
+			if !piece.Captured {
+				t.Fatalf("expected jumped piece to be marked captured")
+			}
+		}
+	}
+}
+
+func TestApplyMoveRejectsInvalidMove(t *testing.T) {
+	game := NewGame()
+	move := Move{{Row: 0, Col: 0}, {Row: 1, Col: 1}}
+
+	err := ApplyMove(&game, move)
+	if err == nil {
+		t.Fatalf("expected invalid move to be rejected")
+	}
+	if err.Reason != "destination is occupied" {
+		t.Fatalf("expected reason %q, got %q", "destination is occupied", err.Reason)
+	}
+
+	if len(game.MoveHistory) != 0 {
+		t.Fatalf("expected invalid move to leave history unchanged, got %+v", game.MoveHistory)
+	}
+
+	if game.Turn != PlayerSideBlack {
+		t.Fatalf("expected invalid move to leave turn unchanged, got %q", game.Turn)
+	}
+
+	for _, piece := range game.Pieces {
+		if piece.ID == "black-1" && piece.Position != (Position{Row: 0, Col: 0}) {
+			t.Fatalf("expected invalid move to leave piece in place, got %+v", piece.Position)
+		}
+	}
+}
+
+func assertMovesEqual(t *testing.T, got []Move, want []Move) {
+	t.Helper()
+
+	if len(got) != len(want) {
+		t.Fatalf("expected %d moves, got %d: %+v", len(want), len(got), got)
+	}
+
+	used := make([]bool, len(got))
+	for _, expectedMove := range want {
+		found := false
+		for i, actualMove := range got {
+			if used[i] {
+				continue
+			}
+			if movesEqual(actualMove, expectedMove) {
+				used[i] = true
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("expected move not returned: %+v; got %+v", expectedMove, got)
+		}
+	}
+}
+
+func assertMoveEqual(t *testing.T, got Move, want Move) {
+	t.Helper()
+	if !movesEqual(got, want) {
+		t.Fatalf("expected move %+v, got %+v", want, got)
+	}
+}
+
+func movesEqual(a Move, b Move) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
