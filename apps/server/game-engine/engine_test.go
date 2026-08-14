@@ -115,10 +115,118 @@ func TestNewGameReturnsStandardStartingBoard(t *testing.T) {
 	}
 }
 
-func TestGetLegalMovesReturnsEmptySliceForPlaceholder(t *testing.T) {
+func TestGetLegalMovesReturnsSimpleOpeningMovesForBlack(t *testing.T) {
 	moves := GetLegalMoves(NewGame())
+
+	expected := map[Move]bool{
+		{From: Position{Row: 2, Col: 0}, To: Position{Row: 3, Col: 1}}: true,
+		{From: Position{Row: 2, Col: 2}, To: Position{Row: 3, Col: 1}}: true,
+		{From: Position{Row: 2, Col: 2}, To: Position{Row: 3, Col: 3}}: true,
+		{From: Position{Row: 2, Col: 4}, To: Position{Row: 3, Col: 3}}: true,
+		{From: Position{Row: 2, Col: 4}, To: Position{Row: 3, Col: 5}}: true,
+		{From: Position{Row: 2, Col: 6}, To: Position{Row: 3, Col: 5}}: true,
+		{From: Position{Row: 2, Col: 6}, To: Position{Row: 3, Col: 7}}: true,
+	}
+
+	if len(moves) != len(expected) {
+		t.Fatalf("expected %d moves, got %d: %+v", len(expected), len(moves), moves)
+	}
+
+	for _, move := range moves {
+		if !expected[move] {
+			t.Fatalf("unexpected move returned: %+v", move)
+		}
+		delete(expected, move)
+	}
+
+	if len(expected) != 0 {
+		t.Fatalf("expected moves not returned: %+v", expected)
+	}
+}
+
+func TestGetLegalMovesReturnsSimpleMovesForRedTurn(t *testing.T) {
+	game := NewGame()
+	game.Turn = PlayerSideRed
+
+	moves := GetLegalMoves(game)
+
+	expected := map[Move]bool{
+		{From: Position{Row: 5, Col: 1}, To: Position{Row: 4, Col: 0}}: true,
+		{From: Position{Row: 5, Col: 1}, To: Position{Row: 4, Col: 2}}: true,
+		{From: Position{Row: 5, Col: 3}, To: Position{Row: 4, Col: 2}}: true,
+		{From: Position{Row: 5, Col: 3}, To: Position{Row: 4, Col: 4}}: true,
+		{From: Position{Row: 5, Col: 5}, To: Position{Row: 4, Col: 4}}: true,
+		{From: Position{Row: 5, Col: 5}, To: Position{Row: 4, Col: 6}}: true,
+		{From: Position{Row: 5, Col: 7}, To: Position{Row: 4, Col: 6}}: true,
+	}
+
+	if len(moves) != len(expected) {
+		t.Fatalf("expected %d moves, got %d: %+v", len(expected), len(moves), moves)
+	}
+
+	for _, move := range moves {
+		if !expected[move] {
+			t.Fatalf("unexpected move returned: %+v", move)
+		}
+		delete(expected, move)
+	}
+
+	if len(expected) != 0 {
+		t.Fatalf("expected moves not returned: %+v", expected)
+	}
+}
+
+func TestGetLegalMovesSkipsBlockedAndCapturedPieces(t *testing.T) {
+	game := Game{
+		Turn:      PlayerSideBlack,
+		BoardSize: 8,
+		Pieces: []Piece{
+			{ID: "black-1", Side: PlayerSideBlack, Kind: PieceKindMan, Position: Position{Row: 2, Col: 2}},
+			{ID: "black-2", Side: PlayerSideBlack, Kind: PieceKindMan, Position: Position{Row: 4, Col: 4}, Captured: true},
+			{ID: "red-1", Side: PlayerSideRed, Kind: PieceKindMan, Position: Position{Row: 3, Col: 1}},
+			{ID: "red-2", Side: PlayerSideRed, Kind: PieceKindMan, Position: Position{Row: 3, Col: 3}},
+		},
+		MoveHistory: []Move{},
+	}
+
+	moves := GetLegalMoves(game)
 	if len(moves) != 0 {
-		t.Fatalf("expected no legal moves in placeholder implementation, got %d", len(moves))
+		t.Fatalf("expected no simple moves for a blocked piece, got %+v", moves)
+	}
+}
+
+func TestGetLegalMovesIncludesBackwardMovesForKings(t *testing.T) {
+	game := Game{
+		Turn:      PlayerSideBlack,
+		BoardSize: 8,
+		Pieces: []Piece{
+			{ID: "black-king-1", Side: PlayerSideBlack, Kind: PieceKindKing, Position: Position{Row: 3, Col: 3}},
+		},
+		MoveHistory: []Move{},
+	}
+
+	moves := GetLegalMoves(game)
+
+	expected := map[Move]bool{
+		{From: Position{Row: 3, Col: 3}, To: Position{Row: 2, Col: 2}}: true,
+		{From: Position{Row: 3, Col: 3}, To: Position{Row: 2, Col: 4}}: true,
+		{From: Position{Row: 3, Col: 3}, To: Position{Row: 4, Col: 2}}: true,
+		{From: Position{Row: 3, Col: 3}, To: Position{Row: 4, Col: 4}}: true,
+	}
+
+	if len(moves) != len(expected) {
+		t.Fatalf("expected %d moves, got %d: %+v", len(expected), len(moves), moves)
+	}
+
+	for _, move := range moves {
+		if !expected[move] {
+			t.Fatalf("unexpected move returned: %+v", move)
+		}
+		delete(expected, move)
+	}
+
+	if len(expected) != 0 {
+		t.Fatalf("expected moves not returned: %+v", expected)
 	}
 }
 
