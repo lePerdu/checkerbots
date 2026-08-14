@@ -13,11 +13,7 @@ func NewGame() Game {
 
 	pieceIndex := 0
 	for row := 0; row < 3; row++ {
-		for col := 0; col < 8; col++ {
-			if (row+col)%2 != 0 {
-				continue
-			}
-
+		for col := row % 2; col < 8; col += 2 {
 			pieces = append(pieces, Piece{
 				ID:       pieceID(PlayerSideBlack, pieceIndex),
 				Side:     PlayerSideBlack,
@@ -30,11 +26,7 @@ func NewGame() Game {
 
 	pieceIndex = 0
 	for row := 5; row < 8; row++ {
-		for col := 0; col < 8; col++ {
-			if (row+col)%2 != 0 {
-				continue
-			}
-
+		for col := row % 2; col < 8; col += 2 {
 			pieces = append(pieces, Piece{
 				ID:       pieceID(PlayerSideRed, pieceIndex),
 				Side:     PlayerSideRed,
