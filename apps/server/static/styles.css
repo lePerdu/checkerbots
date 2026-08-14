@@ -1,5 +1,5 @@
 :root {
-  color-scheme: light;
+  color-scheme: light dark;
   --bg: #f5efe6;
   --panel: #fffaf4;
   --text: #1f1b18;
@@ -13,6 +13,22 @@
   --button-hover: #1f58b0;
 }
 
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #16120f;
+    --panel: #211b16;
+    --text: #f5ede4;
+    --muted: #c2b5a7;
+    --border: #4d4035;
+    --board-light: #d5b487;
+    --board-dark: #6a4328;
+    --red-piece: #d54b46;
+    --black-piece: #111111;
+    --button: #4f8df5;
+    --button-hover: #76a8ff;
+  }
+}
+
 * {
   box-sizing: border-box;
 }
@@ -21,7 +37,7 @@ body {
   margin: 0;
   font-family: Arial, sans-serif;
   color: var(--text);
-  background: linear-gradient(180deg, var(--bg), #eadfce);
+  background: linear-gradient(180deg, var(--bg), color-mix(in srgb, var(--bg) 72%, white));
 }
 
 .app-shell {
@@ -37,7 +53,7 @@ body {
   border: 1px solid var(--border);
   border-radius: 16px;
   padding: 24px;
-  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.08);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.18);
 }
 
 .panel__header {
