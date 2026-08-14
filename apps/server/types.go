@@ -1,4 +1,4 @@
-package boardmodel
+package main
 
 import "time"
 
