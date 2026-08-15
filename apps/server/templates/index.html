@@ -19,22 +19,11 @@
 
       <div class="status-row">
         <span class="status-label">Turn</span>
-        <strong id="turn-indicator" class="turn-indicator">{{.Turn}}</strong>
+        <strong id="turn-indicator" class="turn-indicator">Loading…</strong>
       </div>
 
       <div class="board-wrapper">
-        <div class="board" role="grid" aria-label="Checkers board">
-          {{range .BoardCells}}
-          <div
-            class="square {{if .IsDark}}square--dark{{else}}square--light{{end}}"
-            role="gridcell"
-            aria-label="Square {{.SquareLabel}}">
-            {{with .Piece}}
-            <div class="{{.Classes}}" aria-label="{{.Side}} {{.Kind}}">{{.Label}}</div>
-            {{end}}
-          </div>
-          {{end}}
-        </div>
+        <div id="board" class="board" role="grid" aria-label="Checkers board"></div>
       </div>
     </section>
   </main>

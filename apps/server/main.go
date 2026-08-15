@@ -15,25 +15,43 @@ import (
 //go:embed static/* templates/*
 var assets embed.FS
 
-type pageData struct {
-	Turn       string
-	BoardSize  int
-	BoardCells []boardCell
+type pageData struct{}
+
+type boardStateResponse struct {
+	Turn       string      `json:"turn"`
+	BoardSize  int         `json:"boardSize"`
+	BoardCells []boardCell `json:"boardCells"`
+}
+
+type legalMovesResponse struct {
+	PieceID string             `json:"pieceId"`
+	Moves   []legalMoveSummary `json:"moves"`
+}
+
+type legalMoveSummary struct {
+	From squarePosition `json:"from"`
+	To   squarePosition `json:"to"`
+}
+
+type squarePosition struct {
+	Row int `json:"row"`
+	Col int `json:"col"`
 }
 
 type boardCell struct {
-	Row         int
-	Col         int
-	IsDark      bool
-	Piece       *boardPiece
-	SquareLabel string
+	Row         int         `json:"row"`
+	Col         int         `json:"col"`
+	IsDark      bool        `json:"isDark"`
+	Piece       *boardPiece `json:"piece,omitempty"`
+	SquareLabel string      `json:"squareLabel"`
 }
 
 type boardPiece struct {
-	Side    string
-	Kind    string
-	Label   string
-	Classes string
+	ID      string `json:"id"`
+	Side    string `json:"side"`
+	Kind    string `json:"kind"`
+	Label   string `json:"label"`
+	Classes string `json:"classes"`
 }
 
 func main() {
@@ -43,6 +61,8 @@ func main() {
 	if err != nil {
 		log.Fatalf("load static assets: %v", err)
 	}
+
+	game := gameengine.NewGame()
 
 	mux := http.NewServeMux()
 	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticFS))))
@@ -56,21 +76,40 @@ func main() {
 			return
 		}
 
-		game := gameengine.NewGame()
-		data := buildPageData(game)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		if err := tmpl.Execute(w, data); err != nil {
+		if err := tmpl.Execute(w, pageData{}); err != nil {
 			log.Printf("render index: %v", err)
 		}
 	})
-	mux.HandleFunc("POST /games/new", func(w http.ResponseWriter, r *http.Request) {
-		game := gameengine.NewGame()
-		response := struct {
-			Turn string `json:"turn"`
-		}{Turn: string(game.Turn)}
+	mux.HandleFunc("GET /api/board", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		if err := json.NewEncoder(w).Encode(buildBoardStateResponse(game)); err != nil {
+			log.Printf("encode board response: %v", err)
+		}
+	})
+	mux.HandleFunc("GET /api/legal-moves", func(w http.ResponseWriter, r *http.Request) {
+		pieceID := r.URL.Query().Get("pieceId")
+		if pieceID == "" {
+			http.Error(w, "pieceId is required", http.StatusBadRequest)
+			return
+		}
+
+		response, ok := buildLegalMovesResponse(game, pieceID)
+		if !ok {
+			http.Error(w, "piece not found", http.StatusNotFound)
+			return
+		}
 
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		if err := json.NewEncoder(w).Encode(response); err != nil {
+			log.Printf("encode legal moves response: %v", err)
+		}
+	})
+	mux.HandleFunc("POST /games/new", func(w http.ResponseWriter, r *http.Request) {
+		game = gameengine.NewGame()
+
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		if err := json.NewEncoder(w).Encode(buildBoardStateResponse(game)); err != nil {
 			log.Printf("encode new game response: %v", err)
 		}
 	})
@@ -86,7 +125,7 @@ func main() {
 	}
 }
 
-func buildPageData(game gameengine.Game) pageData {
+func buildBoardStateResponse(game gameengine.Game) boardStateResponse {
 	piecesByPosition := make(map[gameengine.Position]gameengine.Piece, len(game.Pieces))
 	for _, piece := range game.Pieces {
 		if piece.Captured {
@@ -107,6 +146,7 @@ func buildPageData(game gameengine.Game) pageData {
 			}
 			if piece, ok := piecesByPosition[position]; ok {
 				cell.Piece = &boardPiece{
+					ID:      piece.ID,
 					Side:    string(piece.Side),
 					Kind:    string(piece.Kind),
 					Label:   pieceGlyph(piece),
@@ -117,7 +157,7 @@ func buildPageData(game gameengine.Game) pageData {
 		}
 	}
 
-	return pageData{
+	return boardStateResponse{
 		Turn:       titleCaseTurn(game.Turn),
 		BoardSize:  game.BoardSize,
 		BoardCells: cells,
@@ -133,6 +173,41 @@ func pieceGlyph(piece gameengine.Piece) string {
 		return "K"
 	}
 	return "●"
+}
+
+func buildLegalMovesResponse(game gameengine.Game, pieceID string) (legalMovesResponse, bool) {
+	piece, ok := findActivePieceByID(game, pieceID)
+	if !ok {
+		return legalMovesResponse{}, false
+	}
+
+	moves := gameengine.GetLegalMoves(game)
+	response := legalMovesResponse{
+		PieceID: pieceID,
+		Moves:   make([]legalMoveSummary, 0),
+	}
+
+	for _, move := range moves {
+		if len(move) != 2 || move[0] != piece.Position {
+			continue
+		}
+		response.Moves = append(response.Moves, legalMoveSummary{
+			From: squarePosition{Row: move[0].Row, Col: move[0].Col},
+			To:   squarePosition{Row: move[1].Row, Col: move[1].Col},
+		})
+	}
+
+	return response, true
+}
+
+func findActivePieceByID(game gameengine.Game, pieceID string) (gameengine.Piece, bool) {
+	for _, piece := range game.Pieces {
+		if piece.Captured || piece.ID != pieceID {
+			continue
+		}
+		return piece, true
+	}
+	return gameengine.Piece{}, false
 }
 
 func titleCaseTurn(side gameengine.PlayerSide) string {
