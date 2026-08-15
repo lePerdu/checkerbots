@@ -21,6 +21,10 @@ func TestNewGameReturnsStandardStartingBoard(t *testing.T) {
 		t.Fatalf("expected empty move history, got %d entries", len(game.MoveHistory))
 	}
 
+	if len(game.LegalMoves) != 7 {
+		t.Fatalf("expected 7 opening legal moves, got %d", len(game.LegalMoves))
+	}
+
 	if len(game.Pieces) != 24 {
 		t.Fatalf("expected 24 pieces, got %d", len(game.Pieces))
 	}
@@ -113,7 +117,8 @@ func TestNewGameReturnsStandardStartingBoard(t *testing.T) {
 }
 
 func TestGetLegalMovesReturnsSimpleOpeningMovesForBlack(t *testing.T) {
-	moves := GetLegalMoves(NewGame())
+	game := NewGame()
+	moves := game.LegalMoves
 
 	expected := []Move{
 		{{Row: 2, Col: 0}, {Row: 3, Col: 1}},
@@ -131,8 +136,7 @@ func TestGetLegalMovesReturnsSimpleOpeningMovesForBlack(t *testing.T) {
 func TestGetLegalMovesReturnsSimpleMovesForRedTurn(t *testing.T) {
 	game := NewGame()
 	game.Turn = PlayerSideRed
-
-	moves := GetLegalMoves(game)
+	computeLegalMoves(&game)
 
 	expected := []Move{
 		{{Row: 5, Col: 1}, {Row: 4, Col: 0}},
@@ -144,7 +148,7 @@ func TestGetLegalMovesReturnsSimpleMovesForRedTurn(t *testing.T) {
 		{{Row: 5, Col: 7}, {Row: 4, Col: 6}},
 	}
 
-	assertMovesEqual(t, moves, expected)
+	assertMovesEqual(t, game.LegalMoves, expected)
 }
 
 func TestGetLegalMovesSkipsBlockedAndCapturedPieces(t *testing.T) {
@@ -160,10 +164,14 @@ func TestGetLegalMovesSkipsBlockedAndCapturedPieces(t *testing.T) {
 		MoveHistory: []Move{},
 	}
 
-	moves := GetLegalMoves(game)
-	if len(moves) != 0 {
-		t.Fatalf("expected no simple moves for a blocked piece, got %+v", moves)
+	computeLegalMoves(&game)
+	moves := game.LegalMoves
+	expected := []Move{
+		{{Row: 2, Col: 2}, {Row: 4, Col: 0}},
+		{{Row: 2, Col: 2}, {Row: 4, Col: 4}},
 	}
+
+	assertMovesEqual(t, moves, expected)
 }
 
 func TestGetLegalMovesIncludesBackwardMovesForKings(t *testing.T) {
@@ -176,7 +184,8 @@ func TestGetLegalMovesIncludesBackwardMovesForKings(t *testing.T) {
 		MoveHistory: []Move{},
 	}
 
-	moves := GetLegalMoves(game)
+	computeLegalMoves(&game)
+	moves := game.LegalMoves
 
 	expected := []Move{
 		{{Row: 3, Col: 3}, {Row: 2, Col: 2}},
@@ -203,6 +212,10 @@ func TestApplyMoveMovesPieceAndAdvancesTurn(t *testing.T) {
 
 	if len(game.MoveHistory) != 1 {
 		t.Fatalf("expected 1 move in history, got %d", len(game.MoveHistory))
+	}
+
+	if len(game.LegalMoves) == 0 {
+		t.Fatalf("expected legal moves to be recomputed after move")
 	}
 
 	assertMoveEqual(t, game.MoveHistory[0], move)
@@ -267,6 +280,67 @@ func TestApplyMoveCapturesOpponentPiece(t *testing.T) {
 				t.Fatalf("expected jumped piece to be marked captured")
 			}
 		}
+	}
+}
+
+func TestGetLegalMovesPrefersJumpsOverSimpleMoves(t *testing.T) {
+	game := Game{
+		Turn:      PlayerSideBlack,
+		BoardSize: 8,
+		Pieces: []Piece{
+			{ID: "black-jumper", Side: PlayerSideBlack, Kind: PieceKindMan, Position: Position{Row: 2, Col: 2}},
+			{ID: "black-simple", Side: PlayerSideBlack, Kind: PieceKindMan, Position: Position{Row: 2, Col: 6}},
+			{ID: "red-1", Side: PlayerSideRed, Kind: PieceKindMan, Position: Position{Row: 3, Col: 3}},
+		},
+		MoveHistory: []Move{},
+	}
+
+	computeLegalMoves(&game)
+	expected := []Move{
+		{{Row: 2, Col: 2}, {Row: 4, Col: 4}},
+	}
+
+	assertMovesEqual(t, game.LegalMoves, expected)
+}
+
+func TestApplyMoveRejectsJumpWithoutPieceToCapture(t *testing.T) {
+	game := Game{
+		Turn:      PlayerSideBlack,
+		BoardSize: 8,
+		Pieces: []Piece{
+			{ID: "black-1", Side: PlayerSideBlack, Kind: PieceKindMan, Position: Position{Row: 2, Col: 0}},
+		},
+		MoveHistory: []Move{},
+	}
+	move := Move{{Row: 2, Col: 0}, {Row: 4, Col: 2}}
+
+	err := ApplyMove(&game, move)
+	if err == nil {
+		t.Fatalf("expected jump without captured piece to be rejected")
+	}
+	if err.Reason != "jump requires a piece to capture" {
+		t.Fatalf("expected reason %q, got %q", "jump requires a piece to capture", err.Reason)
+	}
+}
+
+func TestApplyMoveRejectsJumpOverOwnPiece(t *testing.T) {
+	game := Game{
+		Turn:      PlayerSideBlack,
+		BoardSize: 8,
+		Pieces: []Piece{
+			{ID: "black-1", Side: PlayerSideBlack, Kind: PieceKindMan, Position: Position{Row: 2, Col: 0}},
+			{ID: "black-2", Side: PlayerSideBlack, Kind: PieceKindMan, Position: Position{Row: 3, Col: 1}},
+		},
+		MoveHistory: []Move{},
+	}
+	move := Move{{Row: 2, Col: 0}, {Row: 4, Col: 2}}
+
+	err := ApplyMove(&game, move)
+	if err == nil {
+		t.Fatalf("expected jump over own piece to be rejected")
+	}
+	if err.Reason != "cannot capture your own piece" {
+		t.Fatalf("expected reason %q, got %q", "cannot capture your own piece", err.Reason)
 	}
 }
 

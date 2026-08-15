@@ -37,28 +37,31 @@ func NewGame() Game {
 		}
 	}
 
-	return Game{
+	game := Game{
 		Turn:        PlayerSideBlack,
 		BoardSize:   8,
 		Pieces:      pieces,
 		MoveHistory: []Move{},
 	}
+	computeLegalMoves(&game)
+	return game
 }
 
 func pieceID(side PlayerSide, index int) string {
 	return string(side) + "-" + strconv.Itoa(index+1)
 }
 
-// GetLegalMoves returns the legal non-capturing moves for the current player.
+// computeLegalMoves returns the legal moves for the current player.
 //
 // Jump and forced-capture rules are intentionally deferred to a later task.
-func GetLegalMoves(game Game) []Move {
-	jumps := getJumpMoves(game)
+func computeLegalMoves(game *Game) {
+	jumps := getJumpMoves(*game)
 	if len(jumps) > 0 {
-		return jumps
+		game.LegalMoves = jumps
+		return
 	}
 
-	return getNonJumpMoves(game)
+	game.LegalMoves = getNonJumpMoves(*game)
 }
 
 func getNonJumpMoves(game Game) []Move {
@@ -257,6 +260,7 @@ func ApplyMove(game *Game, move Move) *ApplyMoveError {
 	game.Pieces = updatedPieces
 	game.Turn = otherSide(game.Turn)
 	game.MoveHistory = append(game.MoveHistory, append(Move(nil), move...))
+	computeLegalMoves(game)
 
 	return nil
 }

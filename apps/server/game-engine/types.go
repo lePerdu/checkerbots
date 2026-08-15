@@ -60,6 +60,7 @@ type Game struct {
 	BoardSize   int
 	Pieces      []Piece
 	MoveHistory []Move
+	LegalMoves  []Move
 	// `nil` if game is in-progress
 	GameOver *GameOver
 }

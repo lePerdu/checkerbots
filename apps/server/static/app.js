@@ -94,35 +94,19 @@ async function loadBoard() {
 async function selectPiece(pieceId, row, col) {
   selectedPieceId = pieceId;
   selectedSquareKey = squareKey(row, col);
-  legalMoveSquareKeys = [];
-  legalMovesByDestination = new Map();
+
+  const legalMovesByPiece = currentBoardState && typeof currentBoardState === 'object'
+    ? currentBoardState.legalMovesByPiece
+    : null;
+  const moves = legalMovesByPiece && Array.isArray(legalMovesByPiece[pieceId])
+    ? legalMovesByPiece[pieceId]
+    : [];
+
+  legalMovesByDestination = new Map(
+    moves.map((move) => [squareKey(move.to.row, move.to.col), move])
+  );
+  legalMoveSquareKeys = Array.from(legalMovesByDestination.keys());
   renderBoard();
-
-  try {
-    const data = await fetchJSON(`/api/legal-moves?pieceId=${encodeURIComponent(pieceId)}`, {
-      headers: {
-        Accept: 'application/json'
-      }
-    });
-
-    if (selectedPieceId !== pieceId) {
-      return;
-    }
-
-    const moves = Array.isArray(data.moves) ? data.moves : [];
-    legalMovesByDestination = new Map(
-      moves.map((move) => [squareKey(move.to.row, move.to.col), move])
-    );
-    legalMoveSquareKeys = Array.from(legalMovesByDestination.keys());
-    renderBoard();
-  } catch (error) {
-    console.error('Failed to load legal moves', error);
-    if (selectedPieceId === pieceId) {
-      legalMoveSquareKeys = [];
-      legalMovesByDestination = new Map();
-      renderBoard();
-    }
-  }
 }
 
 async function applyMove(move) {

@@ -18,14 +18,10 @@ var assets embed.FS
 type pageData struct{}
 
 type boardStateResponse struct {
-	Turn       string      `json:"turn"`
-	BoardSize  int         `json:"boardSize"`
-	BoardCells []boardCell `json:"boardCells"`
-}
-
-type legalMovesResponse struct {
-	PieceID string             `json:"pieceId"`
-	Moves   []legalMoveSummary `json:"moves"`
+	Turn              string                        `json:"turn"`
+	BoardSize         int                           `json:"boardSize"`
+	BoardCells        []boardCell                   `json:"boardCells"`
+	LegalMovesByPiece map[string][]legalMoveSummary `json:"legalMovesByPiece"`
 }
 
 type legalMoveSummary struct {
@@ -88,26 +84,8 @@ func main() {
 	})
 	mux.HandleFunc("GET /api/board", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		if err := json.NewEncoder(w).Encode(buildBoardStateResponse(game)); err != nil {
+		if err := json.NewEncoder(w).Encode(buildBoardStateResponse(&game)); err != nil {
 			log.Printf("encode board response: %v", err)
-		}
-	})
-	mux.HandleFunc("GET /api/legal-moves", func(w http.ResponseWriter, r *http.Request) {
-		pieceID := r.URL.Query().Get("pieceId")
-		if pieceID == "" {
-			http.Error(w, "pieceId is required", http.StatusBadRequest)
-			return
-		}
-
-		response, ok := buildLegalMovesResponse(game, pieceID)
-		if !ok {
-			http.Error(w, "piece not found", http.StatusNotFound)
-			return
-		}
-
-		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		if err := json.NewEncoder(w).Encode(response); err != nil {
-			log.Printf("encode legal moves response: %v", err)
 		}
 	})
 	mux.HandleFunc("POST /api/moves", func(w http.ResponseWriter, r *http.Request) {
@@ -127,7 +105,7 @@ func main() {
 		}
 
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		if err := json.NewEncoder(w).Encode(buildBoardStateResponse(game)); err != nil {
+		if err := json.NewEncoder(w).Encode(buildBoardStateResponse(&game)); err != nil {
 			log.Printf("encode apply move response: %v", err)
 		}
 	})
@@ -135,7 +113,7 @@ func main() {
 		game = gameengine.NewGame()
 
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		if err := json.NewEncoder(w).Encode(buildBoardStateResponse(game)); err != nil {
+		if err := json.NewEncoder(w).Encode(buildBoardStateResponse(&game)); err != nil {
 			log.Printf("encode new game response: %v", err)
 		}
 	})
@@ -151,7 +129,8 @@ func main() {
 	}
 }
 
-func buildBoardStateResponse(game gameengine.Game) boardStateResponse {
+func buildBoardStateResponse(game *gameengine.Game) boardStateResponse {
+	legalMoves := game.LegalMoves
 	piecesByPosition := make(map[gameengine.Position]gameengine.Piece, len(game.Pieces))
 	for _, piece := range game.Pieces {
 		if piece.Captured {
@@ -183,10 +162,28 @@ func buildBoardStateResponse(game gameengine.Game) boardStateResponse {
 		}
 	}
 
+	legalMovesByPiece := make(map[string][]legalMoveSummary)
+	for _, move := range legalMoves {
+		if len(move) != 2 {
+			continue
+		}
+
+		piece, ok := piecesByPosition[move[0]]
+		if !ok {
+			continue
+		}
+
+		legalMovesByPiece[piece.ID] = append(legalMovesByPiece[piece.ID], legalMoveSummary{
+			From: squarePosition{Row: move[0].Row, Col: move[0].Col},
+			To:   squarePosition{Row: move[1].Row, Col: move[1].Col},
+		})
+	}
+
 	return boardStateResponse{
-		Turn:       titleCaseTurn(game.Turn),
-		BoardSize:  game.BoardSize,
-		BoardCells: cells,
+		Turn:              titleCaseTurn(game.Turn),
+		BoardSize:         game.BoardSize,
+		BoardCells:        cells,
+		LegalMovesByPiece: legalMovesByPiece,
 	}
 }
 
@@ -199,41 +196,6 @@ func pieceGlyph(piece gameengine.Piece) string {
 		return "K"
 	}
 	return "●"
-}
-
-func buildLegalMovesResponse(game gameengine.Game, pieceID string) (legalMovesResponse, bool) {
-	piece, ok := findActivePieceByID(game, pieceID)
-	if !ok {
-		return legalMovesResponse{}, false
-	}
-
-	moves := gameengine.GetLegalMoves(game)
-	response := legalMovesResponse{
-		PieceID: pieceID,
-		Moves:   make([]legalMoveSummary, 0),
-	}
-
-	for _, move := range moves {
-		if len(move) != 2 || move[0] != piece.Position {
-			continue
-		}
-		response.Moves = append(response.Moves, legalMoveSummary{
-			From: squarePosition{Row: move[0].Row, Col: move[0].Col},
-			To:   squarePosition{Row: move[1].Row, Col: move[1].Col},
-		})
-	}
-
-	return response, true
-}
-
-func findActivePieceByID(game gameengine.Game, pieceID string) (gameengine.Piece, bool) {
-	for _, piece := range game.Pieces {
-		if piece.Captured || piece.ID != pieceID {
-			continue
-		}
-		return piece, true
-	}
-	return gameengine.Piece{}, false
 }
 
 func titleCaseTurn(side gameengine.PlayerSide) string {
