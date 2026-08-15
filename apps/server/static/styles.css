@@ -98,23 +98,6 @@ h1 {
   background: var(--button-hover);
 }
 
-.status-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 20px;
-}
-
-.status-label {
-  color: var(--muted);
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  font-size: 0.85rem;
-}
-
-.turn-indicator {
-  font-size: 1.1rem;
-}
 
 .board-wrapper {
   display: flex;

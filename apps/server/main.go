@@ -19,9 +19,15 @@ type pageData struct{}
 
 type boardStateResponse struct {
 	Turn              string                        `json:"turn"`
+	GameOver          *gameOverResponse             `json:"gameOver"`
 	BoardSize         int                           `json:"boardSize"`
 	BoardCells        []boardCell                   `json:"boardCells"`
 	LegalMovesByPiece map[string][]legalMoveSummary `json:"legalMovesByPiece"`
+}
+
+type gameOverResponse struct {
+	Winner string `json:"winner"`
+	Reason string `json:"reason"`
 }
 
 type legalMoveSummary struct {
@@ -179,11 +185,20 @@ func buildBoardStateResponse(game *gameengine.Game) boardStateResponse {
 		})
 	}
 
+	var gameOver *gameOverResponse
+	if game.GameOver != nil {
+		gameOver = &gameOverResponse{
+			Winner: titleCaseTurn(game.GameOver.Winner),
+			Reason: game.GameOver.Reason,
+		}
+	}
+
 	return boardStateResponse{
 		Turn:              titleCaseTurn(game.Turn),
 		BoardSize:         game.BoardSize,
 		BoardCells:        cells,
 		LegalMovesByPiece: legalMovesByPiece,
+		GameOver:          gameOver,
 	}
 }
 

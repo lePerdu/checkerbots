@@ -1,6 +1,6 @@
 const boardElement = document.getElementById('board');
 const newGameButton = document.getElementById('new-game-button');
-const turnIndicator = document.getElementById('turn-indicator');
+const messageLabel = document.getElementById('message-label');
 
 let currentBoardState = null;
 let selectedPieceId = null;
@@ -20,7 +20,7 @@ function clearSelection() {
 }
 
 function renderBoard() {
-  if (!boardElement || !turnIndicator || !currentBoardState) {
+  if (!boardElement || !messageLabel || !currentBoardState) {
     return;
   }
 
@@ -28,7 +28,14 @@ function renderBoard() {
   const boardSize = Number.isInteger(currentBoardState.boardSize) && currentBoardState.boardSize > 0 ? currentBoardState.boardSize : 8;
   const legalMoveSquareKeySet = new Set(legalMoveSquareKeys);
 
-  turnIndicator.textContent = typeof currentBoardState.turn === 'string' ? currentBoardState.turn : 'Unknown';
+  if (currentBoardState.gameOver && typeof currentBoardState.gameOver.winner === 'string') {
+    messageLabel.textContent = `${currentBoardState.gameOver.winner} wins!`;
+  } else if (typeof currentBoardState.turn === 'string' && currentBoardState.turn.length > 0) {
+    messageLabel.textContent = `${currentBoardState.turn} to move.`;
+  } else {
+    messageLabel.textContent = 'Start a new game';
+  }
+
   boardElement.replaceChildren();
   boardElement.style.gridTemplateColumns = `repeat(${boardSize}, 1fr)`;
   boardElement.style.gridTemplateRows = `repeat(${boardSize}, 1fr)`;
@@ -85,8 +92,8 @@ async function loadBoard() {
     renderBoard();
   } catch (error) {
     console.error('Failed to load board', error);
-    if (turnIndicator) {
-      turnIndicator.textContent = 'Unavailable';
+    if (messageLabel) {
+      messageLabel.textContent = 'Start a new game';
     }
   }
 }

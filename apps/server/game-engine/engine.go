@@ -55,13 +55,18 @@ func pieceID(side PlayerSide, index int) string {
 //
 // Jump and forced-capture rules are intentionally deferred to a later task.
 func computeLegalMoves(game *Game) {
-	jumps := getJumpMoves(*game)
-	if len(jumps) > 0 {
-		game.LegalMoves = jumps
+	game.LegalMoves = getJumpMoves(*game)
+	if len(game.LegalMoves) > 0 {
 		return
 	}
 
 	game.LegalMoves = getNonJumpMoves(*game)
+	if len(game.LegalMoves) == 0 {
+		game.GameOver = &GameOver{
+			Winner: otherSide(game.Turn),
+			Reason: "No more moves!",
+		}
+	}
 }
 
 func getNonJumpMoves(game Game) []Move {
