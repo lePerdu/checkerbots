@@ -4,16 +4,25 @@ import (
 	"strconv"
 )
 
-// TODO: Use 2d array? Track this in `Game`?
-type BoardCache map[Position]*Piece
+// TODO: Use 2d array? Track this in `Game` for easy lookups later?
+type boardCache map[Position]*Piece
 
-// NewGame creates a standard starting game state for checkers.
-func NewGame() Game {
-	pieces := make([]Piece, 0, 24)
+func NewGame(config GameConfig) Game {
+	if config.BoardSize <= 0 {
+		panic("BoardSize must be positive")
+	}
+	if config.BoardSize%2 != 0 {
+		panic("BoardSize must be even")
+	}
+	if config.InitialRows <= 0 {
+		panic("InitialRows must be positive")
+	}
+
+	pieces := make([]Piece, 0, config.InitialRows*config.BoardSize/2)
 
 	pieceIndex := 0
-	for row := 0; row < 3; row++ {
-		for col := row % 2; col < 8; col += 2 {
+	for row := 0; row < config.InitialRows; row++ {
+		for col := row % 2; col < config.BoardSize; col += 2 {
 			pieces = append(pieces, Piece{
 				ID:       pieceID(PlayerSideBlack, pieceIndex),
 				Side:     PlayerSideBlack,
@@ -25,7 +34,7 @@ func NewGame() Game {
 	}
 
 	pieceIndex = 0
-	for row := 5; row < 8; row++ {
+	for row := config.BoardSize - 1; row >= config.BoardSize-config.InitialRows; row-- {
 		for col := row % 2; col < 8; col += 2 {
 			pieces = append(pieces, Piece{
 				ID:       pieceID(PlayerSideRed, pieceIndex),
@@ -39,12 +48,19 @@ func NewGame() Game {
 
 	game := Game{
 		Turn:        PlayerSideBlack,
-		BoardSize:   8,
+		BoardSize:   config.BoardSize,
 		Pieces:      pieces,
 		MoveHistory: []Move{},
 	}
 	computeLegalMoves(&game)
 	return game
+}
+
+func NewGame8x8() Game {
+	return NewGame(GameConfig{
+		BoardSize:   8,
+		InitialRows: 3,
+	})
 }
 
 func pieceID(side PlayerSide, index int) string {
@@ -103,12 +119,12 @@ func getNonJumpMoves(game Game) []Move {
 	return moves
 }
 
-func getBoardCache(game Game) BoardCache {
+func getBoardCache(game Game) boardCache {
 	return getBoardCacheFromPieces(game.Pieces)
 }
 
-func getBoardCacheFromPieces(pieces []Piece) BoardCache {
-	board := BoardCache{}
+func getBoardCacheFromPieces(pieces []Piece) boardCache {
+	board := boardCache{}
 	for i := range pieces {
 		piece := &pieces[i]
 		if piece.Captured {
@@ -119,7 +135,7 @@ func getBoardCacheFromPieces(pieces []Piece) BoardCache {
 	return board
 }
 
-func getJumpStepsForPiece(game Game, board BoardCache, piece Piece) []Position {
+func getJumpStepsForPiece(game Game, board boardCache, piece Piece) []Position {
 	// TODO: Pre-allocate capacity of 2 (4 for king) since that's the most a piece can every have?
 	destinations := []Position{}
 	for _, delta := range moveDeltasForPiece(piece) {

@@ -51,6 +51,12 @@ func (e *ApplyMoveError) Error() string {
 	return e.Reason
 }
 
+// Config for creating a new game.
+type GameConfig struct {
+	BoardSize   int
+	InitialRows int
+}
+
 // Game holds the rules-engine-owned game state.
 //
 // Board is included as an explicit future home for square occupancy, while Pieces

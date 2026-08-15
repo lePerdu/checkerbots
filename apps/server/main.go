@@ -69,7 +69,7 @@ func main() {
 		log.Fatalf("load static assets: %v", err)
 	}
 
-	game := gameengine.NewGame()
+	game := gameengine.NewGame8x8()
 
 	mux := http.NewServeMux()
 	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticFS))))
@@ -116,7 +116,7 @@ func main() {
 		}
 	})
 	mux.HandleFunc("POST /games/new", func(w http.ResponseWriter, r *http.Request) {
-		game = gameengine.NewGame()
+		game = gameengine.NewGame8x8()
 
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		if err := json.NewEncoder(w).Encode(buildBoardStateResponse(&game)); err != nil {
