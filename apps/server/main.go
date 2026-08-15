@@ -38,6 +38,11 @@ type squarePosition struct {
 	Col int `json:"col"`
 }
 
+type applyMoveRequest struct {
+	From squarePosition `json:"from"`
+	To   squarePosition `json:"to"`
+}
+
 type boardCell struct {
 	Row         int         `json:"row"`
 	Col         int         `json:"col"`
@@ -103,6 +108,27 @@ func main() {
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		if err := json.NewEncoder(w).Encode(response); err != nil {
 			log.Printf("encode legal moves response: %v", err)
+		}
+	})
+	mux.HandleFunc("POST /api/moves", func(w http.ResponseWriter, r *http.Request) {
+		var request applyMoveRequest
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			http.Error(w, "invalid request body", http.StatusBadRequest)
+			return
+		}
+
+		move := gameengine.Move{
+			{Row: request.From.Row, Col: request.From.Col},
+			{Row: request.To.Row, Col: request.To.Col},
+		}
+		if err := gameengine.ApplyMove(&game, move); err != nil {
+			http.Error(w, err.Reason, http.StatusBadRequest)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		if err := json.NewEncoder(w).Encode(buildBoardStateResponse(game)); err != nil {
+			log.Printf("encode apply move response: %v", err)
 		}
 	})
 	mux.HandleFunc("POST /games/new", func(w http.ResponseWriter, r *http.Request) {

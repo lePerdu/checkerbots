@@ -6,6 +6,7 @@ let currentBoardState = null;
 let selectedPieceId = null;
 let selectedSquareKey = null;
 let legalMoveSquareKeys = [];
+let legalMovesByDestination = new Map();
 
 function squareKey(row, col) {
   return `${row},${col}`;
@@ -15,6 +16,7 @@ function clearSelection() {
   selectedPieceId = null;
   selectedSquareKey = null;
   legalMoveSquareKeys = [];
+  legalMovesByDestination = new Map();
 }
 
 function renderBoard() {
@@ -57,9 +59,6 @@ function renderBoard() {
       piece.className = typeof cell.piece.classes === 'string' ? cell.piece.classes : 'piece';
       piece.setAttribute('aria-label', `${cell.piece.side} ${cell.piece.kind}`);
       piece.textContent = typeof cell.piece.label === 'string' ? cell.piece.label : '';
-      piece.dataset.pieceId = cell.piece.id;
-      piece.dataset.row = String(cell.row);
-      piece.dataset.col = String(cell.col);
       square.appendChild(piece);
     }
 
@@ -96,6 +95,7 @@ async function selectPiece(pieceId, row, col) {
   selectedPieceId = pieceId;
   selectedSquareKey = squareKey(row, col);
   legalMoveSquareKeys = [];
+  legalMovesByDestination = new Map();
   renderBoard();
 
   try {
@@ -109,31 +109,61 @@ async function selectPiece(pieceId, row, col) {
       return;
     }
 
-    legalMoveSquareKeys = Array.isArray(data.moves)
-      ? data.moves.map((move) => squareKey(move.to.row, move.to.col))
-      : [];
+    const moves = Array.isArray(data.moves) ? data.moves : [];
+    legalMovesByDestination = new Map(
+      moves.map((move) => [squareKey(move.to.row, move.to.col), move])
+    );
+    legalMoveSquareKeys = Array.from(legalMovesByDestination.keys());
     renderBoard();
   } catch (error) {
     console.error('Failed to load legal moves', error);
     if (selectedPieceId === pieceId) {
       legalMoveSquareKeys = [];
+      legalMovesByDestination = new Map();
       renderBoard();
     }
   }
 }
 
+async function applyMove(move) {
+  currentBoardState = await fetchJSON('/api/moves', {
+    method: 'POST',
+    headers: {
+      Accept: 'application/json',
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(move)
+  });
+  clearSelection();
+  renderBoard();
+}
+
 if (boardElement) {
   boardElement.addEventListener('click', async (event) => {
     const square = event.target instanceof Element ? event.target.closest('.square') : null;
-    if (square instanceof HTMLElement) {
-      const pieceId = square.dataset.pieceId;
-      const row = Number.parseInt(square.dataset.row ?? '', 10);
-      const col = Number.parseInt(square.dataset.col ?? '', 10);
+    if (!(square instanceof HTMLElement)) {
+      clearSelection();
+      renderBoard();
+      return;
+    }
 
-      if (pieceId && Number.isInteger(row) && Number.isInteger(col)) {
-        await selectPiece(pieceId, row, col);
-        return;
+    const row = Number.parseInt(square.dataset.row ?? '', 10);
+    const col = Number.parseInt(square.dataset.col ?? '', 10);
+    const clickedSquareKey = squareKey(row, col);
+
+    if (selectedPieceId && legalMovesByDestination.has(clickedSquareKey)) {
+      try {
+        await applyMove(legalMovesByDestination.get(clickedSquareKey));
+      } catch (error) {
+        console.error('Failed to apply move', error);
       }
+      return;
+    }
+
+    const pieceId = square.dataset.pieceId;
+    if (pieceId && Number.isInteger(row) && Number.isInteger(col)) {
+      await selectPiece(pieceId, row, col);
+      return;
     }
 
     clearSelection();
