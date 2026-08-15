@@ -135,31 +135,85 @@ func getBoardCacheFromPieces(pieces []Piece) boardCache {
 	return board
 }
 
-func getJumpStepsForPiece(game Game, board boardCache, piece Piece) []Position {
+// jumpStep describes a single jump: the position of the captured piece and
+// the landing square.
+type jumpStep struct {
+	Over Position
+	Dest Position
+}
+
+func getJumpStepsFrom(game Game, board boardCache, side PlayerSide, kind PieceKind, position Position, captured map[Position]bool) []jumpStep {
 	// TODO: Pre-allocate capacity of 2 (4 for king) since that's the most a piece can every have?
-	destinations := []Position{}
-	for _, delta := range moveDeltasForPiece(piece) {
+	steps := []jumpStep{}
+	for _, delta := range moveDeltasFor(side, kind) {
 		over := Position{
-			Row: piece.Position.Row + delta.Row,
-			Col: piece.Position.Col + delta.Col,
+			Row: position.Row + delta.Row,
+			Col: position.Col + delta.Col,
 		}
 		destination := Position{
-			Row: piece.Position.Row + 2*delta.Row,
-			Col: piece.Position.Col + 2*delta.Col,
+			Row: position.Row + 2*delta.Row,
+			Col: position.Col + 2*delta.Col,
 		}
 		if !isInsideBoard(destination, game.BoardSize) {
 			continue
 		}
-		if other, exists := board[over]; !exists || other.Side == piece.Side {
+		// A king can't jump the same piece twice within a single sequence.
+		if captured[over] {
+			continue
+		}
+		if other, exists := board[over]; !exists || other.Side == side {
 			continue
 		}
 		if _, exists := board[destination]; exists {
 			continue
 		}
 
-		destinations = append(destinations, destination)
+		steps = append(steps, jumpStep{Over: over, Dest: destination})
 	}
-	return destinations
+	return steps
+}
+
+// getJumpSequences recursively explores all legal multi-jump paths available
+// to a single piece, starting from its current position.
+//
+// board reflects the state of the board with the moving piece's starting
+// square cleared out (since it's no longer there once it starts jumping),
+// but with all other pieces - including ones already captured earlier in
+// this same sequence - still present, since real captures aren't resolved
+// until the whole move is applied. captured tracks the positions already
+// jumped-over in this sequence so they can't be captured again.
+//
+// A sequence stops as soon as a man reaches its promotion row - it can't
+// keep jumping in the same turn. A piece that starts (or already became) a
+// king isn't affected by the promotion row and keeps jumping normally.
+func getJumpSequences(game Game, board boardCache, side PlayerSide, kind PieceKind, position Position, captured map[Position]bool, path Move) []Move {
+	steps := getJumpStepsFrom(game, board, side, kind, position, captured)
+	if len(steps) == 0 {
+		if len(path) > 1 {
+			return []Move{append(Move{}, path...)}
+		}
+		return nil
+	}
+
+	moves := []Move{}
+	for _, step := range steps {
+		newCaptured := make(map[Position]bool, len(captured)+1)
+		for pos := range captured {
+			newCaptured[pos] = true
+		}
+		newCaptured[step.Over] = true
+
+		newPath := append(append(Move{}, path...), step.Dest)
+
+		if kind == PieceKindMan && step.Dest.Row == kingRow(side) {
+			// Promotion ends the jump sequence immediately.
+			moves = append(moves, newPath)
+			continue
+		}
+
+		moves = append(moves, getJumpSequences(game, board, side, kind, step.Dest, newCaptured, newPath)...)
+	}
+	return moves
 }
 
 func getJumpMoves(game Game) []Move {
@@ -170,16 +224,30 @@ func getJumpMoves(game Game) []Move {
 			continue
 		}
 
-		for _, dest := range getJumpStepsForPiece(game, board, piece) {
-			moves = append(moves, Move{piece.Position, dest})
-		}
+		movingBoard := copyBoardCache(board)
+		delete(movingBoard, piece.Position)
+
+		sequences := getJumpSequences(game, movingBoard, piece.Side, piece.Kind, piece.Position, map[Position]bool{}, Move{piece.Position})
+		moves = append(moves, sequences...)
 	}
 
 	return moves
 }
 
+func copyBoardCache(board boardCache) boardCache {
+	copied := make(boardCache, len(board))
+	for pos, piece := range board {
+		copied[pos] = piece
+	}
+	return copied
+}
+
 func moveDeltasForPiece(piece Piece) []Position {
-	if piece.Kind == PieceKindKing {
+	return moveDeltasFor(piece.Side, piece.Kind)
+}
+
+func moveDeltasFor(side PlayerSide, kind PieceKind) []Position {
+	if kind == PieceKindKing {
 		return []Position{
 			{Row: -1, Col: -1},
 			{Row: -1, Col: 1},
@@ -188,7 +256,7 @@ func moveDeltasForPiece(piece Piece) []Position {
 		}
 	}
 
-	if piece.Side == PlayerSideBlack {
+	if side == PlayerSideBlack {
 		return []Position{
 			{Row: 1, Col: -1},
 			{Row: 1, Col: 1},

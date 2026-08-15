@@ -371,6 +371,117 @@ func TestApplyMoveRejectsInvalidMove(t *testing.T) {
 	}
 }
 
+func TestGetLegalMovesFindsMultiStepJumpSequence(t *testing.T) {
+	game := Game{
+		Turn:      PlayerSideBlack,
+		BoardSize: 8,
+		Pieces: []Piece{
+			{ID: "black-1", Side: PlayerSideBlack, Kind: PieceKindMan, Position: Position{Row: 0, Col: 2}},
+			{ID: "red-1", Side: PlayerSideRed, Kind: PieceKindMan, Position: Position{Row: 1, Col: 3}},
+			{ID: "red-2", Side: PlayerSideRed, Kind: PieceKindMan, Position: Position{Row: 3, Col: 3}},
+		},
+		MoveHistory: []Move{},
+	}
+
+	computeLegalMoves(&game)
+	expected := []Move{
+		{{Row: 0, Col: 2}, {Row: 2, Col: 4}, {Row: 4, Col: 2}},
+	}
+
+	assertMovesEqual(t, game.LegalMoves, expected)
+}
+
+func TestGetLegalMovesKingCannotJumpSamePieceTwice(t *testing.T) {
+	// The king could otherwise hop back and forth over the single red piece
+	// forever; it must only be allowed to capture it once.
+	game := Game{
+		Turn:      PlayerSideBlack,
+		BoardSize: 8,
+		Pieces: []Piece{
+			{ID: "black-king", Side: PlayerSideBlack, Kind: PieceKindKing, Position: Position{Row: 2, Col: 2}},
+			{ID: "red-1", Side: PlayerSideRed, Kind: PieceKindMan, Position: Position{Row: 3, Col: 3}},
+		},
+		MoveHistory: []Move{},
+	}
+
+	computeLegalMoves(&game)
+	expected := []Move{
+		{{Row: 2, Col: 2}, {Row: 4, Col: 4}},
+	}
+
+	assertMovesEqual(t, game.LegalMoves, expected)
+}
+
+func TestGetLegalMovesJumpSequenceEndsWhenPieceIsPromoted(t *testing.T) {
+	// black-1 can jump to row 7 (its promotion row) and would have another
+	// jump available from there, but becoming a king must end the sequence.
+	game := Game{
+		Turn:      PlayerSideBlack,
+		BoardSize: 8,
+		Pieces: []Piece{
+			{ID: "black-1", Side: PlayerSideBlack, Kind: PieceKindMan, Position: Position{Row: 5, Col: 3}},
+			{ID: "red-1", Side: PlayerSideRed, Kind: PieceKindMan, Position: Position{Row: 6, Col: 4}},
+			{ID: "red-2", Side: PlayerSideRed, Kind: PieceKindMan, Position: Position{Row: 6, Col: 6}},
+		},
+		MoveHistory: []Move{},
+	}
+
+	computeLegalMoves(&game)
+	expected := []Move{
+		{{Row: 5, Col: 3}, {Row: 7, Col: 5}},
+	}
+
+	assertMovesEqual(t, game.LegalMoves, expected)
+}
+
+func TestGetLegalMovesKingContinuesJumpingPastPromotionRow(t *testing.T) {
+	// black-king is already a king, so landing on row 7 (black's promotion
+	// row) doesn't stop it from continuing the jump sequence.
+	game := Game{
+		Turn:      PlayerSideBlack,
+		BoardSize: 8,
+		Pieces: []Piece{
+			{ID: "black-king", Side: PlayerSideBlack, Kind: PieceKindKing, Position: Position{Row: 5, Col: 3}},
+			{ID: "red-1", Side: PlayerSideRed, Kind: PieceKindMan, Position: Position{Row: 6, Col: 4}},
+			{ID: "red-2", Side: PlayerSideRed, Kind: PieceKindMan, Position: Position{Row: 6, Col: 6}},
+		},
+		MoveHistory: []Move{},
+	}
+
+	computeLegalMoves(&game)
+	expected := []Move{
+		{{Row: 5, Col: 3}, {Row: 7, Col: 5}, {Row: 5, Col: 7}},
+	}
+
+	assertMovesEqual(t, game.LegalMoves, expected)
+}
+
+func TestGetLegalMovesAllowsDifferentLengthJumpSequencesSimultaneously(t *testing.T) {
+	// black-1 has only a single jump available, while black-2 has a
+	// two-step jump sequence available; both should be legal moves.
+	game := Game{
+		Turn:      PlayerSideBlack,
+		BoardSize: 8,
+		Pieces: []Piece{
+			{ID: "black-1", Side: PlayerSideBlack, Kind: PieceKindMan, Position: Position{Row: 0, Col: 0}},
+			{ID: "red-1", Side: PlayerSideRed, Kind: PieceKindMan, Position: Position{Row: 1, Col: 1}},
+
+			{ID: "black-2", Side: PlayerSideBlack, Kind: PieceKindMan, Position: Position{Row: 0, Col: 4}},
+			{ID: "red-2", Side: PlayerSideRed, Kind: PieceKindMan, Position: Position{Row: 1, Col: 5}},
+			{ID: "red-3", Side: PlayerSideRed, Kind: PieceKindMan, Position: Position{Row: 3, Col: 5}},
+		},
+		MoveHistory: []Move{},
+	}
+
+	computeLegalMoves(&game)
+	expected := []Move{
+		{{Row: 0, Col: 0}, {Row: 2, Col: 2}},
+		{{Row: 0, Col: 4}, {Row: 2, Col: 6}, {Row: 4, Col: 4}},
+	}
+
+	assertMovesEqual(t, game.LegalMoves, expected)
+}
+
 func assertMovesEqual(t *testing.T, got []Move, want []Move) {
 	t.Helper()
 
