@@ -1,6 +1,6 @@
 {
   "name": "checkerbots",
-  "image": "mcr.microsoft.com/devcontainers/go:1-1.24-bookworm",
+  "image": "mcr.microsoft.com/devcontainers/go:2-1.26-trixie",
   "customizations": {
     "vscode": {
       "extensions": [
@@ -13,6 +13,6 @@
       }
     }
   },
-  "postCreateCommand": "go version && golangci-lint version",
+  "postCreateCommand": "go install github.com/air-verse/air@v1.67.4 && go version && air -v && golangci-lint version",
   "remoteUser": "vscode"
 }

@@ -21,6 +21,9 @@ coverage.out
 Thumbs.db
 .Trash-*/
 
+# Air
+tmp/
+
 # Zed / workspace-local files
 .zed/
 
