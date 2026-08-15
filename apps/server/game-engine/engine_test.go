@@ -482,6 +482,69 @@ func TestGetLegalMovesAllowsDifferentLengthJumpSequencesSimultaneously(t *testin
 	assertMovesEqual(t, game.LegalMoves, expected)
 }
 
+func TestApplyMoveAppliesMultiStepJumpSequence(t *testing.T) {
+	game := Game{
+		Turn:      PlayerSideBlack,
+		BoardSize: 8,
+		Pieces: []Piece{
+			{ID: "black-1", Side: PlayerSideBlack, Kind: PieceKindMan, Position: Position{Row: 0, Col: 2}},
+			{ID: "red-1", Side: PlayerSideRed, Kind: PieceKindMan, Position: Position{Row: 1, Col: 3}},
+			{ID: "red-2", Side: PlayerSideRed, Kind: PieceKindMan, Position: Position{Row: 3, Col: 3}},
+		},
+		MoveHistory: []Move{},
+	}
+	computeLegalMoves(&game)
+	move := Move{{Row: 0, Col: 2}, {Row: 2, Col: 4}, {Row: 4, Col: 2}}
+
+	err := ApplyMove(&game, move)
+	if err != nil {
+		t.Fatalf("expected multi-step jump to be applied, got error: %v", err)
+	}
+
+	if game.Turn != PlayerSideRed {
+		t.Fatalf("expected turn %q after multi-step jump, got %q", PlayerSideRed, game.Turn)
+	}
+
+	assertMoveEqual(t, game.MoveHistory[0], move)
+
+	for _, piece := range game.Pieces {
+		switch piece.ID {
+		case "black-1":
+			if piece.Position != (Position{Row: 4, Col: 2}) {
+				t.Fatalf("expected jumping piece at %+v, got %+v", Position{Row: 4, Col: 2}, piece.Position)
+			}
+		case "red-1", "red-2":
+			if !piece.Captured {
+				t.Fatalf("expected piece %q to be captured", piece.ID)
+			}
+		}
+	}
+}
+
+func TestApplyMoveRejectsMultiStepMoveNotInLegalMoves(t *testing.T) {
+	game := Game{
+		Turn:      PlayerSideBlack,
+		BoardSize: 8,
+		Pieces: []Piece{
+			{ID: "black-1", Side: PlayerSideBlack, Kind: PieceKindMan, Position: Position{Row: 0, Col: 2}},
+			{ID: "red-1", Side: PlayerSideRed, Kind: PieceKindMan, Position: Position{Row: 1, Col: 3}},
+			{ID: "red-2", Side: PlayerSideRed, Kind: PieceKindMan, Position: Position{Row: 3, Col: 3}},
+		},
+		MoveHistory: []Move{},
+	}
+	computeLegalMoves(&game)
+	// Only one destination is reachable after landing at (2,4); (4,6) is not.
+	move := Move{{Row: 0, Col: 2}, {Row: 2, Col: 4}, {Row: 4, Col: 6}}
+
+	err := ApplyMove(&game, move)
+	if err == nil {
+		t.Fatalf("expected illegal multi-step move to be rejected")
+	}
+	if err.Reason != "move is not a legal move" {
+		t.Fatalf("expected reason %q, got %q", "move is not a legal move", err.Reason)
+	}
+}
+
 func assertMovesEqual(t *testing.T, got []Move, want []Move) {
 	t.Helper()
 

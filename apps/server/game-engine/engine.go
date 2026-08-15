@@ -276,9 +276,12 @@ func isInsideBoard(position Position, boardSize int) bool {
 // ApplyMove applies a legal move in place.
 //
 // It returns nil when the move was applied. Invalid moves return an
-// ApplyMoveError describing the reason. This implementation supports simple
-// diagonal moves and single-jump captures. Multi-jump sequences, forced-capture
-// enforcement, promotion, and terminal-state evaluation are deferred.
+// ApplyMoveError describing the reason. Simple diagonal moves and single-jump
+// captures are validated step-by-step below. Multi-jump sequences (moves with
+// more than 2 positions) are instead validated by matching them exactly
+// against game.LegalMoves, since that list already encodes all multi-jump
+// rules (no double-capturing a piece, promotion ending a sequence, etc.) -
+// re-deriving those rules here would just duplicate computeLegalMoves.
 func ApplyMove(game *Game, move Move) *ApplyMoveError {
 	if game == nil {
 		return &ApplyMoveError{Reason: "game is nil"}
@@ -286,8 +289,11 @@ func ApplyMove(game *Game, move Move) *ApplyMoveError {
 	if game.GameOver != nil {
 		return &ApplyMoveError{Reason: "game is over"}
 	}
-	if len(move) != 2 {
-		return &ApplyMoveError{Reason: "move must contain exactly 2 positions"}
+	if len(move) < 2 {
+		return &ApplyMoveError{Reason: "move must contain at least 2 positions"}
+	}
+	if len(move) > 2 {
+		return applyMultiStepMove(game, move)
 	}
 
 	from := move[0]
@@ -352,6 +358,71 @@ func ApplyMove(game *Game, move Move) *ApplyMoveError {
 	computeLegalMoves(game)
 
 	return nil
+}
+
+// applyMultiStepMove applies a move with more than 2 positions, i.e. a
+// multi-jump sequence. It's only valid if it exactly matches one of the
+// current player's precomputed legal moves.
+func applyMultiStepMove(game *Game, move Move) *ApplyMoveError {
+	var matched Move
+	for _, legalMove := range game.LegalMoves {
+		if movePathsEqual(legalMove, move) {
+			matched = legalMove
+			break
+		}
+	}
+	if matched == nil {
+		return &ApplyMoveError{Reason: "move is not a legal move"}
+	}
+
+	updatedPieces := append([]Piece(nil), game.Pieces...)
+	pieceIndex := findActivePieceAt(updatedPieces, matched[0])
+	if pieceIndex == -1 {
+		return &ApplyMoveError{Reason: "no active piece at move origin"}
+	}
+	piece := updatedPieces[pieceIndex]
+
+	for i := 0; i < len(matched)-1; i++ {
+		from := matched[i]
+		to := matched[i+1]
+		if abs(to.Row-from.Row) != 2 {
+			continue
+		}
+		middle := Position{
+			Row: from.Row + (to.Row-from.Row)/2,
+			Col: from.Col + (to.Col-from.Col)/2,
+		}
+		capturedIndex := findActivePieceAt(updatedPieces, middle)
+		if capturedIndex == -1 {
+			return &ApplyMoveError{Reason: "jump requires a piece to capture"}
+		}
+		updatedPieces[capturedIndex].Captured = true
+	}
+
+	destination := matched[len(matched)-1]
+	if destination.Row == kingRow(piece.Side) {
+		updatedPieces[pieceIndex].Kind = PieceKindKing
+	}
+	updatedPieces[pieceIndex].Position = destination
+
+	game.Pieces = updatedPieces
+	game.Turn = otherSide(game.Turn)
+	game.MoveHistory = append(game.MoveHistory, append(Move(nil), matched...))
+	computeLegalMoves(game)
+
+	return nil
+}
+
+func movePathsEqual(a Move, b Move) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func kingRow(side PlayerSide) int {

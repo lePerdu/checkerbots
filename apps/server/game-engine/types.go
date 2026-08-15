@@ -34,8 +34,9 @@ type Piece struct {
 
 // Move represents a move path as an ordered list of visited positions.
 //
-// Current rules support only single-step and single-jump moves, so valid moves
-// are expected to contain exactly two positions for now.
+// A simple step or single jump is represented as exactly two positions.
+// Multi-jump sequences are represented as the full chain of positions
+// visited, e.g. [start, afterJump1, afterJump2, ...].
 type Move []Position
 
 // ApplyMoveError describes why a move could not be applied.

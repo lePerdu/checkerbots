@@ -1,13 +1,20 @@
 package main
 
 import (
+	"context"
 	"embed"
+	"encoding/gob"
 	"encoding/json"
+	"errors"
 	"html/template"
 	"io/fs"
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
+	"path"
+	"syscall"
+	"time"
 
 	gameengine "checkerbots/apps/server/game-engine"
 )
@@ -30,9 +37,11 @@ type gameOverResponse struct {
 	Reason string `json:"reason"`
 }
 
+// legalMoveSummary describes one full legal move option, as the ordered list
+// of squares visited. A simple step or single jump has 2 positions; a
+// multi-jump sequence has one entry per square landed on.
 type legalMoveSummary struct {
-	From squarePosition `json:"from"`
-	To   squarePosition `json:"to"`
+	Path []squarePosition `json:"path"`
 }
 
 type squarePosition struct {
@@ -41,8 +50,7 @@ type squarePosition struct {
 }
 
 type applyMoveRequest struct {
-	From squarePosition `json:"from"`
-	To   squarePosition `json:"to"`
+	Path []squarePosition `json:"path"`
 }
 
 type boardCell struct {
@@ -57,8 +65,40 @@ type boardPiece struct {
 	ID      string `json:"id"`
 	Side    string `json:"side"`
 	Kind    string `json:"kind"`
-	Label   string `json:"label"`
 	Classes string `json:"classes"`
+}
+
+type serverState struct {
+	Game gameengine.Game
+}
+
+func saveState(filePath string, state *serverState) error {
+	log.Printf("saving state to: %s", filePath)
+	file, err := os.Create(filePath)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	if err := gob.NewEncoder(file).Encode(state); err != nil {
+		return err
+	}
+	return nil
+}
+
+func loadState(filePath string) (*serverState, error) {
+	log.Printf("loading state from: %s", filePath)
+	file, err := os.Open(filePath)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	var state serverState
+	if err := gob.NewDecoder(file).Decode(&state); err != nil {
+		return nil, err
+	}
+	return &state, nil
 }
 
 func main() {
@@ -69,7 +109,20 @@ func main() {
 		log.Fatalf("load static assets: %v", err)
 	}
 
-	game := gameengine.NewGame8x8()
+	var statePath string
+	if tmpDir, set := os.LookupEnv("TMP_DIR"); set {
+		statePath = path.Join(tmpDir, "checkerbots.gob")
+	}
+
+	var state *serverState
+	if loaded, err := loadState(statePath); err == nil {
+		state = loaded
+	} else {
+		log.Printf("failed to load state: %v; using default state", err)
+		state = &serverState{
+			Game: gameengine.NewGame8x8(),
+		}
+	}
 
 	mux := http.NewServeMux()
 	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticFS))))
@@ -90,7 +143,7 @@ func main() {
 	})
 	mux.HandleFunc("GET /api/board", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		if err := json.NewEncoder(w).Encode(buildBoardStateResponse(&game)); err != nil {
+		if err := json.NewEncoder(w).Encode(buildBoardStateResponse(&state.Game)); err != nil {
 			log.Printf("encode board response: %v", err)
 		}
 	})
@@ -101,25 +154,29 @@ func main() {
 			return
 		}
 
-		move := gameengine.Move{
-			{Row: request.From.Row, Col: request.From.Col},
-			{Row: request.To.Row, Col: request.To.Col},
+		if len(request.Path) < 2 {
+			http.Error(w, "move path must contain at least 2 positions", http.StatusBadRequest)
+			return
 		}
-		if err := gameengine.ApplyMove(&game, move); err != nil {
+		move := make(gameengine.Move, len(request.Path))
+		for i, position := range request.Path {
+			move[i] = gameengine.Position{Row: position.Row, Col: position.Col}
+		}
+		if err := gameengine.ApplyMove(&state.Game, move); err != nil {
 			http.Error(w, err.Reason, http.StatusBadRequest)
 			return
 		}
 
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		if err := json.NewEncoder(w).Encode(buildBoardStateResponse(&game)); err != nil {
+		if err := json.NewEncoder(w).Encode(buildBoardStateResponse(&state.Game)); err != nil {
 			log.Printf("encode apply move response: %v", err)
 		}
 	})
 	mux.HandleFunc("POST /games/new", func(w http.ResponseWriter, r *http.Request) {
-		game = gameengine.NewGame8x8()
+		state.Game = gameengine.NewGame8x8()
 
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		if err := json.NewEncoder(w).Encode(buildBoardStateResponse(&game)); err != nil {
+		if err := json.NewEncoder(w).Encode(buildBoardStateResponse(&state.Game)); err != nil {
 			log.Printf("encode new game response: %v", err)
 		}
 	})
@@ -129,8 +186,29 @@ func main() {
 		addr = ":" + value
 	}
 
+	server := &http.Server{
+		Addr:    addr,
+		Handler: mux,
+	}
+
+	interruptChan := make(chan os.Signal, 1)
+	signal.Notify(interruptChan, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		sig := <-interruptChan
+		log.Printf("signal received (%s); saving state before exit", sig)
+		if err := saveState(statePath, state); err != nil {
+			log.Printf("save state: %v", err)
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := server.Shutdown(ctx); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Printf("server shutdown: %v", err)
+		}
+	}()
+
 	log.Printf("server listening on %s", addr)
-	if err := http.ListenAndServe(addr, mux); err != nil {
+	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatal(err)
 	}
 }
@@ -160,8 +238,7 @@ func buildBoardStateResponse(game *gameengine.Game) boardStateResponse {
 					ID:      piece.ID,
 					Side:    string(piece.Side),
 					Kind:    string(piece.Kind),
-					Label:   pieceGlyph(piece),
-					Classes: "piece piece--" + string(piece.Side),
+					Classes: pieceClasses(piece),
 				}
 			}
 			cells = append(cells, cell)
@@ -170,7 +247,7 @@ func buildBoardStateResponse(game *gameengine.Game) boardStateResponse {
 
 	legalMovesByPiece := make(map[string][]legalMoveSummary)
 	for _, move := range legalMoves {
-		if len(move) != 2 {
+		if len(move) < 2 {
 			continue
 		}
 
@@ -179,10 +256,12 @@ func buildBoardStateResponse(game *gameengine.Game) boardStateResponse {
 			continue
 		}
 
-		legalMovesByPiece[piece.ID] = append(legalMovesByPiece[piece.ID], legalMoveSummary{
-			From: squarePosition{Row: move[0].Row, Col: move[0].Col},
-			To:   squarePosition{Row: move[1].Row, Col: move[1].Col},
-		})
+		path := make([]squarePosition, len(move))
+		for i, position := range move {
+			path[i] = squarePosition{Row: position.Row, Col: position.Col}
+		}
+
+		legalMovesByPiece[piece.ID] = append(legalMovesByPiece[piece.ID], legalMoveSummary{Path: path})
 	}
 
 	var gameOver *gameOverResponse
@@ -206,11 +285,12 @@ func squareLabel(position gameengine.Position) string {
 	return string(rune('a'+position.Col)) + string(rune('1'+position.Row))
 }
 
-func pieceGlyph(piece gameengine.Piece) string {
+func pieceClasses(piece gameengine.Piece) string {
+	classes := "piece piece--" + string(piece.Side)
 	if piece.Kind == gameengine.PieceKindKing {
-		return "K"
+		classes += " piece--king"
 	}
-	return "●"
+	return classes
 }
 
 func titleCaseTurn(side gameengine.PlayerSide) string {

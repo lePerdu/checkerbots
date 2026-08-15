@@ -17,4 +17,4 @@ check: lint test
 
 .PHONY: server-dev
 server-dev:
-	air -c apps/server/.air.toml
+	air -c apps/server/air.toml
