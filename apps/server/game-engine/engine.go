@@ -53,10 +53,10 @@ func pieceID(side PlayerSide, index int) string {
 //
 // Jump and forced-capture rules are intentionally deferred to a later task.
 func GetLegalMoves(game Game) []Move {
-	// jumps := getJumpMoves(game)
-	// if len(jumps) > 0 {
-	// 	return jumps
-	// }
+	jumps := getJumpMoves(game)
+	if len(jumps) > 0 {
+		return jumps
+	}
 
 	return getNonJumpMoves(game)
 }
@@ -249,12 +249,23 @@ func ApplyMove(game *Game, move Move) *ApplyMoveError {
 		updatedPieces[capturedIndex].Captured = true
 	}
 
+	if to.Row == kingRow(piece.Side) {
+		updatedPieces[pieceIndex].Kind = PieceKindKing
+	}
+
 	updatedPieces[pieceIndex].Position = to
 	game.Pieces = updatedPieces
 	game.Turn = otherSide(game.Turn)
 	game.MoveHistory = append(game.MoveHistory, append(Move(nil), move...))
 
 	return nil
+}
+
+func kingRow(side PlayerSide) int {
+	if side == PlayerSideBlack {
+		return 7
+	}
+	return 0
 }
 
 func findActivePieceAt(pieces []Piece, position Position) int {
