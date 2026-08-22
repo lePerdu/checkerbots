@@ -146,6 +146,50 @@ func main() {
 		}
 	}
 
+	type sseMessage struct {
+		event string
+		data  any
+	}
+
+	type streamControlMessage struct {
+		req *http.Request
+		// `nil` to close the stream
+		stream chan<- sseMessage
+	}
+
+	// pub-sub for event broadcasting
+	streamControlChan := make(chan streamControlMessage)
+	masterEventStream := make(chan sseMessage)
+	go func() {
+		// TODO: Serialize messages once instead of per-stream?
+		// Would likely require complex buffer management
+		activeStreams := make(map[*http.Request]chan<- sseMessage)
+
+		for {
+			select {
+			case msg := <-streamControlChan:
+				if msg.stream == nil {
+					if existing, ok := activeStreams[msg.req]; ok {
+						// Probably not necessary? But may as well close the stream
+						close(existing)
+					}
+					delete(activeStreams, msg.req)
+				} else {
+					activeStreams[msg.req] = msg.stream
+				}
+			case event := <-masterEventStream:
+				for _, stream := range activeStreams {
+					// TODO: Should this be a non-blocking send?
+					stream <- event
+				}
+			}
+		}
+	}()
+
+	broadcastEvent := func(event sseMessage) {
+		masterEventStream <- event
+	}
+
 	mux := http.NewServeMux()
 	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticFS))))
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -189,17 +233,92 @@ func main() {
 			return
 		}
 
+		boardState := buildBoardStateResponse(&state.Game)
+		go broadcastEvent(sseMessage{
+			event: "boardupdate",
+			data:  boardState,
+		})
+
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		if err := json.NewEncoder(w).Encode(buildBoardStateResponse(&state.Game)); err != nil {
+		if err := json.NewEncoder(w).Encode(boardState); err != nil {
 			log.Printf("encode apply move response: %v", err)
 		}
 	})
-	mux.HandleFunc("POST /games/new", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /api/new-game", func(w http.ResponseWriter, r *http.Request) {
 		state.Game = gameengine.NewGame8x8()
+		boardState := buildBoardStateResponse(&state.Game)
+		go broadcastEvent(sseMessage{
+			event: "boardupdate",
+			data:  boardState,
+		})
 
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		if err := json.NewEncoder(w).Encode(buildBoardStateResponse(&state.Game)); err != nil {
+		if err := json.NewEncoder(w).Encode(boardState); err != nil {
 			log.Printf("encode new game response: %v", err)
+		}
+	})
+	mux.HandleFunc("/api/events", func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("/api/events started")
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Connection", "keep-alive")
+
+		// TODO: Send initial event upon stream registration?
+		w.Write([]byte("event: boardupdate\ndata: "))
+		jsonEncoder := json.NewEncoder(w)
+		if err := jsonEncoder.Encode(buildBoardStateResponse(&state.Game)); err != nil {
+			log.Printf("encode event: %v", err)
+		}
+		w.Write([]byte("\n\n"))
+		flusher.Flush()
+
+		// TODO: Make buffered?
+		eventStream := make(chan sseMessage)
+
+		streamControlChan <- streamControlMessage{
+			req:    r,
+			stream: eventStream,
+		}
+		defer func() {
+			streamControlChan <- streamControlMessage{req: r, stream: nil}
+		}()
+
+		keepAliveInterval := 15 * time.Second
+		keepAliveTimer := time.NewTicker(keepAliveInterval)
+		defer keepAliveTimer.Stop()
+
+		for {
+			select {
+			case <-keepAliveTimer.C:
+				if _, err := w.Write([]byte(":\n")); err != nil {
+					log.Printf("keep-alive write error: %v", err)
+				}
+				flusher.Flush()
+				log.Printf("keep-alive")
+			case event, ok := <-eventStream:
+				if !ok {
+					return
+				}
+				if _, err := w.Write([]byte("event: " + event.event + "\ndata: ")); err != nil {
+					log.Printf("write event: %v", err)
+				}
+				if err := jsonEncoder.Encode(event.data); err != nil {
+					log.Printf("encode event: %v", err)
+				}
+				if _, err := w.Write([]byte("\n\n")); err != nil {
+					log.Printf("write event: %v", err)
+				}
+				flusher.Flush()
+			case <-r.Context().Done():
+				log.Printf("/api/events request ended")
+				return
+			}
 		}
 	})
 

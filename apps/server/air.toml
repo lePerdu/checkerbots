@@ -24,7 +24,7 @@ env_files = ["./apps/server/air.env"]
 [misc]
   clean_on_exit = true
 
-[proxy]
-  enabled = true
-  proxy_port = 8080
-  app_port = 8081
+# [proxy]
+#   enabled = true
+#   proxy_port = 8080
+#   app_port = 8081

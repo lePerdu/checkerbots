@@ -159,23 +159,6 @@ async function fetchJSON(url, options) {
   return response.json();
 }
 
-async function loadBoard() {
-  try {
-    currentBoardState = await fetchJSON('/api/board', {
-      headers: {
-        Accept: 'application/json'
-      }
-    });
-    clearSelection();
-    renderBoard();
-  } catch (error) {
-    console.error('Failed to load board', error);
-    if (messageLabel) {
-      messageLabel.textContent = 'Start a new game';
-    }
-  }
-}
-
 function selectPiece(pieceId, row, col) {
   const legalMovesByPiece = currentBoardState && typeof currentBoardState === 'object'
     ? currentBoardState.legalMovesByPiece
@@ -234,7 +217,6 @@ async function submitCompletedMove(move) {
       body: JSON.stringify({ path: move.path })
     });
     clearSelection();
-    renderBoard();
   } catch (error) {
     console.error('Failed to apply move', error);
     updateMoveControls();
@@ -308,17 +290,17 @@ if (cancelMoveButton) {
 
 if (newGameButton) {
   newGameButton.addEventListener('click', async () => {
+    // TODO: How to sync state now that the board state is being streamed?
     newGameButton.disabled = true;
 
     try {
-      currentBoardState = await fetchJSON('/games/new', {
+      currentBoardState = await fetchJSON('/api/new-game', {
         method: 'POST',
         headers: {
           Accept: 'application/json'
         }
       });
       clearSelection();
-      renderBoard();
     } catch (error) {
       console.error('Failed to start new game', error);
     } finally {
@@ -335,4 +317,17 @@ document.addEventListener('keydown', (event) => {
   cancelMove();
 });
 
-void loadBoard();
+
+function loadEventStream() {
+  const stream = new EventSource('/api/events')
+  stream.addEventListener('error', error => {
+    console.error('Event stream error', error)
+    // TODO: Need to reconnect here?
+  })
+  stream.addEventListener('boardupdate', event => {
+    currentBoardState = JSON.parse(event.data);
+    renderBoard();
+  });
+}
+
+loadEventStream();
