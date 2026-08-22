@@ -63,13 +63,8 @@ type GameConfig struct {
 // Board is included as an explicit future home for square occupancy, while Pieces
 // keeps the initial API simple and easy to evolve in subsequent tasks.
 type Game struct {
-	Turn        PlayerSide
-	BoardSize   int
-	Pieces      []Piece
-	MoveHistory []Move
-	LegalMoves  []Move
-	// `nil` if game is in-progress
-	GameOver *GameOver
+	StoredGame
+	LegalMoves []Move
 }
 
 // GameOver summarizes terminal-game evaluation without committing future tasks to
@@ -77,4 +72,14 @@ type Game struct {
 type GameOver struct {
 	Winner PlayerSide
 	Reason string
+}
+
+// Minimal state needed for storing/loading a game
+type StoredGame struct {
+	Turn        PlayerSide
+	BoardSize   int
+	Pieces      []Piece
+	MoveHistory []Move
+	// `nil` if game is in-progress
+	GameOver *GameOver
 }

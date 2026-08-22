@@ -68,8 +68,25 @@ type boardPiece struct {
 	Classes string `json:"classes"`
 }
 
+type WorldPos struct {
+	XMM, YMM float32
+}
+
+type boardConfig struct {
+	CellSizeMM float32
+}
+
+type robot struct {
+	ID  string
+	Pos WorldPos
+}
+
 type serverState struct {
 	Game gameengine.Game
+}
+
+type storedState struct {
+	Game gameengine.StoredGame
 }
 
 func saveState(filePath string, state *serverState) error {
@@ -80,7 +97,10 @@ func saveState(filePath string, state *serverState) error {
 	}
 	defer file.Close()
 
-	if err := gob.NewEncoder(file).Encode(state); err != nil {
+	storage := storedState{
+		Game: gameengine.GameToStored(state.Game),
+	}
+	if err := gob.NewEncoder(file).Encode(storage); err != nil {
 		return err
 	}
 	return nil
@@ -94,11 +114,13 @@ func loadState(filePath string) (*serverState, error) {
 	}
 	defer file.Close()
 
-	var state serverState
-	if err := gob.NewDecoder(file).Decode(&state); err != nil {
+	var storage storedState
+	if err := gob.NewDecoder(file).Decode(&storage); err != nil {
 		return nil, err
 	}
-	return &state, nil
+	return &serverState{
+		Game: gameengine.GameFromStored(storage.Game),
+	}, nil
 }
 
 func main() {
