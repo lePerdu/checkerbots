@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"embed"
-	"encoding/gob"
 	"encoding/json"
 	"errors"
 	"html/template"
@@ -24,7 +23,17 @@ var assets embed.FS
 
 type pageData struct{}
 
-type boardStateResponse struct {
+// AppSnapshot is the full serializable state sent to clients on initial SSE connect
+// and available via GET /api/state.
+type AppSnapshot struct {
+	Version   int64        `json:"version"`
+	Game      GameSnapshot `json:"game"`
+	UpdatedAt time.Time    `json:"updated_at"`
+}
+
+// GameSnapshot carries the board and game state delivered to the frontend.
+// It is sent as a game.updated SSE event whenever the game changes.
+type GameSnapshot struct {
 	Turn              string                        `json:"turn"`
 	GameOver          *gameOverResponse             `json:"gameOver"`
 	BoardSize         int                           `json:"boardSize"`
@@ -37,9 +46,9 @@ type gameOverResponse struct {
 	Reason string `json:"reason"`
 }
 
-// legalMoveSummary describes one full legal move option, as the ordered list
-// of squares visited. A simple step or single jump has 2 positions; a
-// multi-jump sequence has one entry per square landed on.
+// legalMoveSummary describes one full legal move option as the ordered list of
+// squares visited. A simple step or single jump has 2 positions; a multi-jump
+// sequence has one entry per square landed on.
 type legalMoveSummary struct {
 	Path []squarePosition `json:"path"`
 }
@@ -68,59 +77,21 @@ type boardPiece struct {
 	Classes string `json:"classes"`
 }
 
-type WorldPos struct {
-	XMM, YMM float32
+type errorResponse struct {
+	Error apiError `json:"error"`
 }
 
-type boardConfig struct {
-	CellSizeMM float32
+type apiError struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
 }
 
-type robot struct {
-	ID  string
-	Pos WorldPos
-}
-
-type serverState struct {
-	Game gameengine.Game
-}
-
-type storedState struct {
-	Game gameengine.StoredGame
-}
-
-func saveState(filePath string, state *serverState) error {
-	log.Printf("saving state to: %s", filePath)
-	file, err := os.Create(filePath)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-
-	storage := storedState{
-		Game: gameengine.GameToStored(state.Game),
-	}
-	if err := gob.NewEncoder(file).Encode(storage); err != nil {
-		return err
-	}
-	return nil
-}
-
-func loadState(filePath string) (*serverState, error) {
-	log.Printf("loading state from: %s", filePath)
-	file, err := os.Open(filePath)
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
-
-	var storage storedState
-	if err := gob.NewDecoder(file).Decode(&storage); err != nil {
-		return nil, err
-	}
-	return &serverState{
-		Game: gameengine.GameFromStored(storage.Game),
-	}, nil
+func writeJSONError(w http.ResponseWriter, status int, code, message string) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(errorResponse{
+		Error: apiError{Code: code, Message: message},
+	})
 }
 
 func main() {
@@ -136,62 +107,25 @@ func main() {
 		statePath = path.Join(tmpDir, "checkerbots.gob")
 	}
 
-	var state *serverState
-	if loaded, err := loadState(statePath); err == nil {
-		state = loaded
-	} else {
+	initial, err := loadState(statePath)
+	if err != nil {
 		log.Printf("failed to load state: %v; using default state", err)
-		state = &serverState{
-			Game: gameengine.NewGame8x8(),
+		initial = appState{
+			Game:      gameengine.NewGame8x8(),
+			Robots:    map[string]RobotInfo{},
+			UpdatedAt: time.Now(),
 		}
 	}
 
-	type sseMessage struct {
-		event string
-		data  any
-	}
+	h := newHub()
+	go h.run()
 
-	type streamControlMessage struct {
-		req *http.Request
-		// `nil` to close the stream
-		stream chan<- sseMessage
-	}
-
-	// pub-sub for event broadcasting
-	streamControlChan := make(chan streamControlMessage)
-	masterEventStream := make(chan sseMessage)
-	go func() {
-		// TODO: Serialize messages once instead of per-stream?
-		// Would likely require complex buffer management
-		activeStreams := make(map[*http.Request]chan<- sseMessage)
-
-		for {
-			select {
-			case msg := <-streamControlChan:
-				if msg.stream == nil {
-					if existing, ok := activeStreams[msg.req]; ok {
-						// Probably not necessary? But may as well close the stream
-						close(existing)
-					}
-					delete(activeStreams, msg.req)
-				} else {
-					activeStreams[msg.req] = msg.stream
-				}
-			case event := <-masterEventStream:
-				for _, stream := range activeStreams {
-					// TODO: Should this be a non-blocking send?
-					stream <- event
-				}
-			}
-		}
-	}()
-
-	broadcastEvent := func(event sseMessage) {
-		masterEventStream <- event
-	}
+	mgr := newStateManager()
+	go mgr.run(initial, h.publish)
 
 	mux := http.NewServeMux()
 	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticFS))))
+
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
 			http.NotFound(w, r)
@@ -201,67 +135,57 @@ func main() {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		if err := tmpl.Execute(w, pageData{}); err != nil {
 			log.Printf("render index: %v", err)
 		}
 	})
+
+	mux.HandleFunc("GET /api/state", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		if err := json.NewEncoder(w).Encode(mgr.getSnapshot()); err != nil {
+			log.Printf("encode state response: %v", err)
+		}
+	})
+
 	mux.HandleFunc("GET /api/board", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		if err := json.NewEncoder(w).Encode(buildBoardStateResponse(&state.Game)); err != nil {
+		if err := json.NewEncoder(w).Encode(mgr.getSnapshot().Game); err != nil {
 			log.Printf("encode board response: %v", err)
 		}
 	})
+
 	mux.HandleFunc("POST /api/moves", func(w http.ResponseWriter, r *http.Request) {
-		var request applyMoveRequest
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-			http.Error(w, "invalid request body", http.StatusBadRequest)
+		var req applyMoveRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSONError(w, http.StatusBadRequest, "bad_request", "invalid request body")
 			return
 		}
-
-		if len(request.Path) < 2 {
-			http.Error(w, "move path must contain at least 2 positions", http.StatusBadRequest)
+		if len(req.Path) < 2 {
+			writeJSONError(w, http.StatusBadRequest, "bad_request", "move path must contain at least 2 positions")
 			return
 		}
-		move := make(gameengine.Move, len(request.Path))
-		for i, position := range request.Path {
-			move[i] = gameengine.Position{Row: position.Row, Col: position.Col}
+		move := make(gameengine.Move, len(req.Path))
+		for i, p := range req.Path {
+			move[i] = gameengine.Position{Row: p.Row, Col: p.Col}
 		}
-		if err := gameengine.ApplyMove(&state.Game, move); err != nil {
-			http.Error(w, err.Reason, http.StatusBadRequest)
+		if err := mgr.applyMove(move); err != nil {
+			writeJSONError(w, http.StatusConflict, "illegal_move", err.Reason)
 			return
 		}
-
-		boardState := buildBoardStateResponse(&state.Game)
-		go broadcastEvent(sseMessage{
-			event: "boardupdate",
-			data:  boardState,
-		})
-
-		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		if err := json.NewEncoder(w).Encode(boardState); err != nil {
-			log.Printf("encode apply move response: %v", err)
-		}
+		w.WriteHeader(http.StatusNoContent)
 	})
+
 	mux.HandleFunc("POST /api/new-game", func(w http.ResponseWriter, r *http.Request) {
-		state.Game = gameengine.NewGame8x8()
-		boardState := buildBoardStateResponse(&state.Game)
-		go broadcastEvent(sseMessage{
-			event: "boardupdate",
-			data:  boardState,
-		})
-
-		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		if err := json.NewEncoder(w).Encode(boardState); err != nil {
-			log.Printf("encode new game response: %v", err)
-		}
+		mgr.newGame()
+		w.WriteHeader(http.StatusNoContent)
 	})
+
 	mux.HandleFunc("/api/events", func(w http.ResponseWriter, r *http.Request) {
-		log.Printf("/api/events started")
+		log.Printf("/api/events: client connected")
 		flusher, ok := w.(http.Flusher)
 		if !ok {
-			http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
+			http.Error(w, "streaming unsupported", http.StatusInternalServerError)
 			return
 		}
 
@@ -269,25 +193,19 @@ func main() {
 		w.Header().Set("Cache-Control", "no-cache")
 		w.Header().Set("Connection", "keep-alive")
 
-		// TODO: Send initial event upon stream registration?
-		w.Write([]byte("event: boardupdate\ndata: "))
-		jsonEncoder := json.NewEncoder(w)
-		if err := jsonEncoder.Encode(buildBoardStateResponse(&state.Game)); err != nil {
-			log.Printf("encode event: %v", err)
-		}
-		w.Write([]byte("\n\n"))
-		flusher.Flush()
+		// Subscribe before getting the snapshot to avoid missing events between
+		// the two steps. Any event received before the snapshot is a harmless
+		// duplicate since game state is idempotent to re-apply.
+		ch := h.subscribe()
+		defer h.unsubscribe(ch)
 
-		// TODO: Make buffered?
-		eventStream := make(chan sseMessage)
-
-		streamControlChan <- streamControlMessage{
-			req:    r,
-			stream: eventStream,
+		snap := mgr.getSnapshot()
+		if msg, err := encodeSSEEvent(sseEvent{name: "state.snapshot", data: snap}); err != nil {
+			log.Printf("/api/events: encode initial state.snapshot: %v", err)
+		} else {
+			w.Write(msg)
+			flusher.Flush()
 		}
-		defer func() {
-			streamControlChan <- streamControlMessage{req: r, stream: nil}
-		}()
 
 		keepAliveInterval := 15 * time.Second
 		keepAliveTimer := time.NewTicker(keepAliveInterval)
@@ -297,26 +215,21 @@ func main() {
 			select {
 			case <-keepAliveTimer.C:
 				if _, err := w.Write([]byte(":\n")); err != nil {
-					log.Printf("keep-alive write error: %v", err)
+					log.Printf("/api/events: keep-alive write error: %v", err)
 				}
 				flusher.Flush()
-				log.Printf("keep-alive")
-			case event, ok := <-eventStream:
+			case msg, ok := <-ch:
 				if !ok {
+					// Hub dropped this client due to a full buffer.
 					return
 				}
-				if _, err := w.Write([]byte("event: " + event.event + "\ndata: ")); err != nil {
-					log.Printf("write event: %v", err)
-				}
-				if err := jsonEncoder.Encode(event.data); err != nil {
-					log.Printf("encode event: %v", err)
-				}
-				if _, err := w.Write([]byte("\n\n")); err != nil {
-					log.Printf("write event: %v", err)
+				if _, err := w.Write(msg); err != nil {
+					log.Printf("/api/events: write error: %v", err)
 				}
 				flusher.Flush()
+				keepAliveTimer.Reset(keepAliveInterval)
 			case <-r.Context().Done():
-				log.Printf("/api/events request ended")
+				log.Printf("/api/events: client disconnected")
 				return
 			}
 		}
@@ -337,10 +250,9 @@ func main() {
 	go func() {
 		sig := <-interruptChan
 		log.Printf("signal received (%s); saving state before exit", sig)
-		if err := saveState(statePath, state); err != nil {
+		if err := mgr.save(statePath); err != nil {
 			log.Printf("save state: %v", err)
 		}
-
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		if err := server.Shutdown(ctx); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -354,8 +266,15 @@ func main() {
 	}
 }
 
-func buildBoardStateResponse(game *gameengine.Game) boardStateResponse {
-	legalMoves := game.LegalMoves
+func buildAppSnapshot(state appState) AppSnapshot {
+	return AppSnapshot{
+		Version:   state.Version,
+		Game:      buildGameSnapshot(&state.Game),
+		UpdatedAt: state.UpdatedAt,
+	}
+}
+
+func buildGameSnapshot(game *gameengine.Game) GameSnapshot {
 	piecesByPosition := make(map[gameengine.Position]gameengine.Piece, len(game.Pieces))
 	for _, piece := range game.Pieces {
 		if piece.Captured {
@@ -387,21 +306,18 @@ func buildBoardStateResponse(game *gameengine.Game) boardStateResponse {
 	}
 
 	legalMovesByPiece := make(map[string][]legalMoveSummary)
-	for _, move := range legalMoves {
+	for _, move := range game.LegalMoves {
 		if len(move) < 2 {
 			continue
 		}
-
 		piece, ok := piecesByPosition[move[0]]
 		if !ok {
 			continue
 		}
-
 		path := make([]squarePosition, len(move))
 		for i, position := range move {
 			path[i] = squarePosition{Row: position.Row, Col: position.Col}
 		}
-
 		legalMovesByPiece[piece.ID] = append(legalMovesByPiece[piece.ID], legalMoveSummary{Path: path})
 	}
 
@@ -413,7 +329,7 @@ func buildBoardStateResponse(game *gameengine.Game) boardStateResponse {
 		}
 	}
 
-	return boardStateResponse{
+	return GameSnapshot{
 		Turn:              titleCaseTurn(game.Turn),
 		BoardSize:         game.BoardSize,
 		BoardCells:        cells,

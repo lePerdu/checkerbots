@@ -72,3 +72,11 @@ type PieceAssignment struct {
 	State     PieceAssignmentState `json:"state"`
 	UpdatedAt time.Time            `json:"updated_at"`
 }
+
+// RobotInfo holds the live state of a physical robot reported by external systems.
+type RobotInfo struct {
+	ID        string    `json:"id"`
+	Pose      Pose      `json:"pose"`
+	PieceID   string    `json:"piece_id"`
+	UpdatedAt time.Time `json:"updated_at"`
+}

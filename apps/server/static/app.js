@@ -151,13 +151,6 @@ function renderBoard() {
   updateMoveControls();
 }
 
-async function fetchJSON(url, options) {
-  const response = await fetch(url, options);
-  if (!response.ok) {
-    throw new Error(`request failed: ${response.status}`);
-  }
-  return response.json();
-}
 
 function selectPiece(pieceId, row, col) {
   const legalMovesByPiece = currentBoardState && typeof currentBoardState === 'object'
@@ -208,17 +201,23 @@ async function submitCompletedMove(move) {
   }
 
   try {
-    currentBoardState = await fetchJSON('/api/moves', {
+    const response = await fetch('/api/moves', {
       method: 'POST',
-      headers: {
-        Accept: 'application/json',
-        'Content-Type': 'application/json'
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ path: move.path })
     });
-    clearSelection();
+
+    if (response.ok) {
+      clearSelection();
+      // Board state will be updated via the game.updated SSE event.
+    } else {
+      const body = await response.json().catch(() => null);
+      const message = body?.error?.message ?? 'Move rejected';
+      console.error('Move rejected:', message);
+      updateMoveControls();
+    }
   } catch (error) {
-    console.error('Failed to apply move', error);
+    console.error('Failed to submit move:', error);
     updateMoveControls();
   }
 }
@@ -290,19 +289,15 @@ if (cancelMoveButton) {
 
 if (newGameButton) {
   newGameButton.addEventListener('click', async () => {
-    // TODO: How to sync state now that the board state is being streamed?
     newGameButton.disabled = true;
-
     try {
-      currentBoardState = await fetchJSON('/api/new-game', {
-        method: 'POST',
-        headers: {
-          Accept: 'application/json'
-        }
-      });
-      clearSelection();
+      const response = await fetch('/api/new-game', { method: 'POST' });
+      if (!response.ok) {
+        console.error('Failed to start new game:', response.status);
+      }
+      // Board state will be updated via the game.updated SSE event.
     } catch (error) {
-      console.error('Failed to start new game', error);
+      console.error('Failed to start new game:', error);
     } finally {
       newGameButton.disabled = false;
     }
@@ -319,13 +314,21 @@ document.addEventListener('keydown', (event) => {
 
 
 function loadEventStream() {
-  const stream = new EventSource('/api/events')
+  const stream = new EventSource('/api/events');
   stream.addEventListener('error', error => {
-    console.error('Event stream error', error)
-    // TODO: Need to reconnect here?
-  })
-  stream.addEventListener('boardupdate', event => {
+    console.error('Event stream error', error);
+  });
+  // state.snapshot is sent once on initial connect with the full app state.
+  stream.addEventListener('state.snapshot', event => {
+    const snapshot = JSON.parse(event.data);
+    currentBoardState = snapshot.game;
+    clearSelection();
+    renderBoard();
+  });
+  // game.updated is sent whenever the game state changes.
+  stream.addEventListener('game.updated', event => {
     currentBoardState = JSON.parse(event.data);
+    clearSelection();
     renderBoard();
   });
 }
