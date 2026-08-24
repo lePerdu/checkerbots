@@ -1,9 +1,14 @@
 const boardElement = document.getElementById('board');
+const robotBoardElement = document.getElementById('robot-board');
 const newGameButton = document.getElementById('new-game-button');
 const cancelMoveButton = document.getElementById('cancel-move-button');
 const messageLabel = document.getElementById('message-label');
 
 let currentBoardState = null;
+
+// Robot state
+let currentRobots = new Map(); // robotId -> RobotInfo
+let boardConfig = { boardSize: 8, cellSizeMM: 450, robotDiameterMM: 340 };
 
 // A move in progress. `selectedPieceId` is set as soon as a piece is picked,
 // and stays set until the move is explicitly cancelled or accepted - clicking
@@ -313,6 +318,57 @@ document.addEventListener('keydown', (event) => {
 });
 
 
+// --- Robot board ---
+
+// Returns the CSS left/top percentages and width percentage for a robot,
+// relative to the robot board element (0,0 = top-left corner).
+function robotCSSPercent(robot) {
+  const totalMM = boardConfig.boardSize * boardConfig.cellSizeMM;
+  const leftPct = 50 + (robot.pose.x_mm / totalMM) * 100;
+  // Game Y increases upward; CSS top increases downward.
+  const topPct = 50 - (robot.pose.y_mm / totalMM) * 100;
+  const sizePct = (boardConfig.robotDiameterMM / totalMM) * 100;
+  return { leftPct, topPct, sizePct };
+}
+
+// Creates or repositions the DOM element for a single robot.
+function syncRobotElement(robot) {
+  if (!robotBoardElement) return;
+  const elemId = `robot-${CSS.escape(robot.id)}`;
+  let el = document.getElementById(elemId);
+  if (!el) {
+    el = document.createElement('div');
+    el.id = elemId;
+    el.className = 'robot';
+    el.textContent = 'R';
+    robotBoardElement.appendChild(el);
+  }
+  const { leftPct, topPct, sizePct } = robotCSSPercent(robot);
+  el.style.left = `${leftPct}%`;
+  el.style.top = `${topPct}%`;
+  el.style.width = `${sizePct}%`;
+}
+
+// Renders the checkerboard grid of the robot board and all current robots.
+function renderRobotBoard() {
+  if (!robotBoardElement || !currentBoardState) return;
+  const boardSize = currentBoardState.boardSize || boardConfig.boardSize;
+  robotBoardElement.replaceChildren();
+  robotBoardElement.style.gridTemplateColumns = `repeat(${boardSize}, 1fr)`;
+  robotBoardElement.style.gridTemplateRows = `repeat(${boardSize}, 1fr)`;
+  const boardCells = Array.isArray(currentBoardState.boardCells) ? currentBoardState.boardCells : [];
+  for (const cell of boardCells) {
+    const square = document.createElement('div');
+    square.className = `square ${cell.isDark ? 'square--dark' : 'square--light'}`;
+    robotBoardElement.appendChild(square);
+  }
+  for (const robot of currentRobots.values()) {
+    syncRobotElement(robot);
+  }
+}
+
+// --- SSE ---
+
 function loadEventStream() {
   const stream = new EventSource('/api/events');
   stream.addEventListener('error', error => {
@@ -322,14 +378,31 @@ function loadEventStream() {
   stream.addEventListener('state.snapshot', event => {
     const snapshot = JSON.parse(event.data);
     currentBoardState = snapshot.game;
+    if (typeof snapshot.cellSizeMM === 'number') boardConfig.cellSizeMM = snapshot.cellSizeMM;
+    if (typeof snapshot.robotDiameterMM === 'number') boardConfig.robotDiameterMM = snapshot.robotDiameterMM;
+    if (snapshot.game && typeof snapshot.game.boardSize === 'number') boardConfig.boardSize = snapshot.game.boardSize;
+    currentRobots.clear();
+    for (const robot of (snapshot.robots || [])) {
+      currentRobots.set(robot.id, robot);
+    }
     clearSelection();
     renderBoard();
+    renderRobotBoard();
   });
   // game.updated is sent whenever the game state changes.
   stream.addEventListener('game.updated', event => {
     currentBoardState = JSON.parse(event.data);
+    if (typeof currentBoardState.boardSize === 'number') boardConfig.boardSize = currentBoardState.boardSize;
     clearSelection();
     renderBoard();
+    // Re-render the checkerboard cells; robot.updated events will reposition robots.
+    renderRobotBoard();
+  });
+  // robot.updated is sent whenever a robot's position changes.
+  stream.addEventListener('robot.updated', event => {
+    const robot = JSON.parse(event.data);
+    currentRobots.set(robot.id, robot);
+    syncRobotElement(robot);
   });
 }
 

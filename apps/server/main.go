@@ -26,9 +26,22 @@ type pageData struct{}
 // AppSnapshot is the full serializable state sent to clients on initial SSE connect
 // and available via GET /api/state.
 type AppSnapshot struct {
-	Version   int64        `json:"version"`
-	Game      GameSnapshot `json:"game"`
-	UpdatedAt time.Time    `json:"updated_at"`
+	Version int64           `json:"version"`
+	Game    GameSnapshot    `json:"game"`
+	Robots  []RobotSnapshot `json:"robots"`
+	// CellSizeMM is the physical size of one board square in millimetres.
+	CellSizeMM float64 `json:"cellSizeMM"`
+	// RobotDiameterMM is the physical robot diameter in millimetres.
+	RobotDiameterMM float64   `json:"robotDiameterMM"`
+	UpdatedAt       time.Time `json:"updated_at"`
+}
+
+// RobotSnapshot is the serializable form of a single robot's state.
+type RobotSnapshot struct {
+	ID        string    `json:"id"`
+	PieceID   string    `json:"piece_id"`
+	Pose      Pose      `json:"pose"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // GameSnapshot carries the board and game state delivered to the frontend.
@@ -116,6 +129,10 @@ func main() {
 			UpdatedAt: time.Now(),
 		}
 	}
+
+	// Ensure robots are in sync with pieces from the loaded/default state.
+	// No events are published here since no subscribers exist yet.
+	syncRobots(&initial)
 
 	h := newHub()
 	go h.run()
@@ -267,10 +284,22 @@ func main() {
 }
 
 func buildAppSnapshot(state appState) AppSnapshot {
+	robots := make([]RobotSnapshot, 0, len(state.Robots))
+	for _, r := range state.Robots {
+		robots = append(robots, RobotSnapshot{
+			ID:        r.ID,
+			PieceID:   r.PieceID,
+			Pose:      r.Pose,
+			UpdatedAt: r.UpdatedAt,
+		})
+	}
 	return AppSnapshot{
-		Version:   state.Version,
-		Game:      buildGameSnapshot(&state.Game),
-		UpdatedAt: state.UpdatedAt,
+		Version:         state.Version,
+		Game:            buildGameSnapshot(&state.Game),
+		Robots:          robots,
+		CellSizeMM:      boardCellSizeMM,
+		RobotDiameterMM: 340,
+		UpdatedAt:       state.UpdatedAt,
 	}
 }
 

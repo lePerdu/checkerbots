@@ -17,9 +17,15 @@
         <button id="new-game-button" class="button" type="button">New game</button>
       </div>
 
-
-      <div class="board-wrapper">
-        <div id="board" class="board" role="grid" aria-label="Checkers board"></div>
+      <div class="boards-row">
+        <div class="board-wrapper">
+          <p class="board-label">Game</p>
+          <div id="board" class="board" role="grid" aria-label="Checkers board"></div>
+        </div>
+        <div class="board-wrapper">
+          <p class="board-label">Robots</p>
+          <div id="robot-board" class="board robot-board" aria-label="Robot positions"></div>
+        </div>
       </div>
 
       <div class="move-controls">

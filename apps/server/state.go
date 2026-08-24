@@ -62,6 +62,60 @@ func loadState(filePath string) (appState, error) {
 	}, nil
 }
 
+// boardCellSizeMM is the physical size of one board square in millimetres.
+const boardCellSizeMM = 450.0
+
+// positionToMM converts a board (row, col) position to mm coordinates relative
+// to the centre of the board. X increases toward higher columns, Y increases
+// toward higher rows.
+func positionToMM(pos gameengine.Position, boardSize int) (xMM, yMM float64) {
+	center := float64(boardSize-1) / 2.0
+	xMM = (float64(pos.Col) - center) * boardCellSizeMM
+	yMM = (float64(pos.Row) - center) * boardCellSizeMM
+	return
+}
+
+// syncRobots ensures state.Robots matches the current piece positions.
+// It returns all RobotInfo values that were created or updated so the caller
+// can publish robot.updated events.
+func syncRobots(state *appState) []RobotInfo {
+	now := time.Now()
+	var changed []RobotInfo
+
+	for _, piece := range state.Game.Pieces {
+		xMM, yMM := positionToMM(piece.Position, state.Game.BoardSize)
+		pose := Pose{
+			XMM:    xMM,
+			YMM:    yMM,
+			Frame:  CoordinateFrameBoard,
+			Source: PoseSourceSimulator,
+		}
+
+		existing, exists := state.Robots[piece.ID]
+		if !exists {
+			// Create a new robot for this piece.
+			robot := RobotInfo{
+				ID:        piece.ID,
+				PieceID:   piece.ID,
+				Pose:      pose,
+				UpdatedAt: now,
+			}
+			state.Robots[piece.ID] = robot
+			changed = append(changed, robot)
+			continue
+		}
+
+		if existing.Pose.XMM != pose.XMM || existing.Pose.YMM != pose.YMM {
+			existing.Pose = pose
+			existing.UpdatedAt = now
+			state.Robots[piece.ID] = existing
+			changed = append(changed, existing)
+		}
+	}
+
+	return changed
+}
+
 // --- State manager ---
 
 // Commands sent to the state manager goroutine.
@@ -102,9 +156,13 @@ func (m *stateManager) run(initial appState, publish func(sseEvent)) {
 		switch c := cmd.(type) {
 		case newGameCmd:
 			state.Game = gameengine.NewGame8x8()
+			state.Robots = map[string]RobotInfo{}
 			state.Version++
 			state.UpdatedAt = time.Now()
-			publish(sseEvent{name: "game.updated", data: buildGameSnapshot(&state.Game)})
+			// Send a full snapshot since (right now) all robots move
+			// If robot.updated events are sent, the channel buffer will overflow since ~25 events are dumped into it
+			syncRobots(&state)
+			publish(sseEvent{name: "state.snapshot", data: buildAppSnapshot(state)})
 			c.reply <- struct{}{}
 
 		case applyMoveCmd:
@@ -115,6 +173,9 @@ func (m *stateManager) run(initial appState, publish func(sseEvent)) {
 			state.Version++
 			state.UpdatedAt = time.Now()
 			publish(sseEvent{name: "game.updated", data: buildGameSnapshot(&state.Game)})
+			for _, robot := range syncRobots(&state) {
+				publish(sseEvent{name: "robot.updated", data: robot})
+			}
 			c.reply <- nil
 
 		case getSnapshotCmd:
