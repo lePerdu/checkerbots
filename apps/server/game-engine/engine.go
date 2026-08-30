@@ -59,17 +59,19 @@ func NewGame(config GameConfig) Game {
 	}
 
 	return GameFromStored(StoredGame{
-		Turn:        PlayerSideBlack,
-		BoardSize:   config.BoardSize,
-		Pieces:      pieces,
-		MoveHistory: []Move{},
+		Turn:           PlayerSideBlack,
+		BoardSize:      config.BoardSize,
+		CaptureColumns: config.CaptureColumns,
+		Pieces:         pieces,
+		MoveHistory:    []Move{},
 	})
 }
 
 func NewGame8x8() Game {
 	return NewGame(GameConfig{
-		BoardSize:   8,
-		InitialRows: 3,
+		BoardSize:      8,
+		InitialRows:    3,
+		CaptureColumns: 2,
 	})
 }
 
@@ -354,8 +356,7 @@ func ApplyMove(game *Game, move Move) *ApplyMoveError {
 		if updatedPieces[capturedIndex].Side == piece.Side {
 			return &ApplyMoveError{Reason: "cannot capture your own piece"}
 		}
-		updatedPieces[capturedIndex].Captured = true
-		recordCapture(game, updatedPieces[capturedIndex].Side, capturedIndex)
+		recordCapture(game, updatedPieces, capturedIndex)
 	}
 
 	if to.Row == kingRow(piece.Side) {
@@ -371,14 +372,42 @@ func ApplyMove(game *Game, move Move) *ApplyMoveError {
 	return nil
 }
 
-// recordCapture appends a captured piece's index to the appropriate side's
-// capture-order list, used later by Game.CapturedRedPieces/CapturedBlackPieces.
-func recordCapture(game *Game, capturedSide PlayerSide, pieceIndex int) {
-	if capturedSide == PlayerSideRed {
-		game.CapturedRedPieceIndices = append(game.CapturedRedPieceIndices, pieceIndex)
-		return
+// recordCapture marks a piece as captured and places it in the next open
+// slot of its side's capture columns beside the board.
+func recordCapture(game *Game, pieces []Piece, pieceIndex int) {
+	piece := &pieces[pieceIndex]
+	count := countCaptured(pieces, piece.Side)
+	piece.Captured = true
+	piece.Position = capturedPiecePosition(count, game.BoardSize, game.CaptureColumns, piece.Side)
+}
+
+func countCaptured(pieces []Piece, side PlayerSide) int {
+	count := 0
+	for _, piece := range pieces {
+		if piece.Captured && piece.Side == side {
+			count++
+		}
 	}
-	game.CapturedBlackPieceIndices = append(game.CapturedBlackPieceIndices, pieceIndex)
+	return count
+}
+
+// capturedPiecePosition returns the extended-grid position for the i-th
+// piece captured from a given side (0-based, in capture order). The outer
+// column (farthest from the board) fills first, then the inner column. Red
+// piles sit to the right and grow upward from the bottom row; black piles
+// sit to the left and grow downward from the top row - as if each captured
+// piece were set down next to the board where it was taken off.
+func capturedPiecePosition(i, boardSize, captureColumns int, side PlayerSide) Position {
+	columnGroup := i / boardSize
+	withinColumn := i % boardSize
+	// offset counts inward from the outer column (captureColumns) to the
+	// column adjacent to the board (1).
+	offset := captureColumns - columnGroup
+
+	if side == PlayerSideRed {
+		return Position{Row: withinColumn, Col: boardSize - 1 + offset}
+	}
+	return Position{Row: boardSize - 1 - withinColumn, Col: -offset}
 }
 
 // applyMultiStepMove applies a move with more than 2 positions, i.e. a
@@ -417,8 +446,7 @@ func applyMultiStepMove(game *Game, move Move) *ApplyMoveError {
 		if capturedIndex == -1 {
 			return &ApplyMoveError{Reason: "jump requires a piece to capture"}
 		}
-		updatedPieces[capturedIndex].Captured = true
-		recordCapture(game, updatedPieces[capturedIndex].Side, capturedIndex)
+		recordCapture(game, updatedPieces, capturedIndex)
 	}
 
 	destination := matched[len(matched)-1]

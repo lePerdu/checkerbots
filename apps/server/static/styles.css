@@ -16,6 +16,7 @@
   --square-legal-fill: rgba(58, 179, 115, 0.42);
   --square-legal-ring: rgba(31, 122, 73, 0.9);
   --piece-moveable-ring: rgba(31, 122, 73, 0.9);
+  --capture-column-bg: #e4dccf;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -36,6 +37,7 @@
     --square-legal-fill: rgba(92, 214, 150, 0.34);
     --square-legal-ring: rgba(92, 214, 150, 0.95);
     --piece-moveable-ring: rgba(92, 214, 150, 0.95);
+    --capture-column-bg: #2c261f;
   }
 }
 
@@ -150,70 +152,20 @@ h1 {
 .board {
   width: 100%;
   aspect-ratio: 1;
+  /* grid-template-columns/rows (and, for the game board, aspect-ratio) are
+     set inline via JS, since the game board's column count - the checkers
+     board plus capture columns on each side - depends on server-provided
+     boardSize/captureColumns, unlike the always-square robot board. */
   display: grid;
-  grid-template-columns: repeat(8, 1fr);
-  grid-template-rows: repeat(8, 1fr);
   border: 8px solid #4e3625;
   border-radius: 10px;
   overflow: hidden;
 }
 
-.board-with-captures {
-  display: flex;
-  gap: 8px;
-  width: 100%;
-}
-
-.board-with-captures .board {
-  /* The board is 8 squares wide and a piece is 72% of a square, so a
-     captured-piece column (which holds one piece width) should grow at
-     0.72/8 of the board's rate - see .captured-pieces below. Using
-     flex-basis 0% (rather than auto) makes the split a pure ratio of
-     available space, so captured pieces always render the same size as
-     on-board pieces, and the board's size never depends on how many
-     pieces have been captured. */
-  flex: 8 8 0%;
-  min-width: 0;
-}
-
-/* Captured pieces sit beside the board: 2 columns of up to 6 pieces each,
-   with the outer column (farther from the board) filled first. Each side
-   holds 2 piece-widths (2 * 0.72 squares), sized proportionally to the
-   board so pieces always match the on-board piece size. */
-.captured-pieces {
-  display: flex;
-  gap: 4px;
-  flex: 1.44 1.44 0%;
-  min-width: 0;
-}
-
-.captured-pieces--right {
-  flex-direction: row-reverse;
-}
-
-.captured-column {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  flex: 1 1 0%;
-  min-width: 0;
-  height: 100%;
-  /* Black pieces stack from the top of the board down. */
-  justify-content: flex-start;
-}
-
-/* Red pieces stack from the bottom of the board up. */
-.captured-pieces--right .captured-column {
-  justify-content: flex-end;
-}
-
-.piece.captured-piece {
-  /* Fill the column, which is already sized to match an on-board piece's
-     diameter; everything else (border, box-shadow, aspect-ratio, ...) is
-     inherited from .piece so captured pieces look identical, just not
-     clickable. */
-  width: 100%;
-  cursor: default;
+/* Extra columns beside the board that hold captured pieces: a neutral,
+   non-checkered background so they read as "off the board". */
+.square--capture {
+  background: var(--capture-column-bg);
 }
 
 /* Robot board: allow robots to render outside the grid (up to 2 tiles). */

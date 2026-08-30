@@ -56,6 +56,9 @@ func (e *ApplyMoveError) Error() string {
 type GameConfig struct {
 	BoardSize   int
 	InitialRows int
+	// CaptureColumns is the number of extra columns reserved on each side of
+	// the board for captured pieces. See Game.CaptureColumns.
+	CaptureColumns int
 }
 
 // Game holds the rules-engine-owned game state.
@@ -67,26 +70,6 @@ type Game struct {
 	LegalMoves []Move
 }
 
-// CapturedRedPieces returns references to captured red pieces, in the order
-// they were captured.
-func (g *Game) CapturedRedPieces() []*Piece {
-	pieces := make([]*Piece, len(g.CapturedRedPieceIndices))
-	for i, index := range g.CapturedRedPieceIndices {
-		pieces[i] = &g.Pieces[index]
-	}
-	return pieces
-}
-
-// CapturedBlackPieces returns references to captured black pieces, in the
-// order they were captured.
-func (g *Game) CapturedBlackPieces() []*Piece {
-	pieces := make([]*Piece, len(g.CapturedBlackPieceIndices))
-	for i, index := range g.CapturedBlackPieceIndices {
-		pieces[i] = &g.Pieces[index]
-	}
-	return pieces
-}
-
 // GameOver summarizes terminal-game evaluation without committing future tasks to
 // a richer result model yet.
 type GameOver struct {
@@ -96,14 +79,15 @@ type GameOver struct {
 
 // Minimal state needed for storing/loading a game
 type StoredGame struct {
-	Turn        PlayerSide
-	BoardSize   int
-	Pieces      []Piece
-	MoveHistory []Move
-	// Indices into Pieces of captured pieces, in the order they were
-	// captured.
-	CapturedRedPieceIndices   []int
-	CapturedBlackPieceIndices []int
+	Turn      PlayerSide
+	BoardSize int
+	// CaptureColumns is the number of extra columns reserved on each side of
+	// the board for captured pieces: red's captured pieces sit in columns
+	// [BoardSize, BoardSize+CaptureColumns), black's sit in columns
+	// [-CaptureColumns, 0). See capturedPiecePosition.
+	CaptureColumns int
+	Pieces         []Piece
+	MoveHistory    []Move
 	// `nil` if game is in-progress
 	GameOver *GameOver
 }

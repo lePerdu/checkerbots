@@ -46,16 +46,20 @@ type RobotSnapshot struct {
 
 // GameSnapshot carries the board and game state delivered to the frontend.
 // It is sent as a game.updated SSE event whenever the game changes.
+//
+// The frontend renders a single grid of BoardSize rows by
+// BoardSize+2*CaptureColumns columns: columns [0, BoardSize) are the actual
+// checkers board, columns [-CaptureColumns, 0) hold black's captured pieces,
+// and columns [BoardSize, BoardSize+CaptureColumns) hold red's. Pieces
+// (on-board or captured) all share the same Row/Col position fields, with
+// their extended-grid position already resolved server-side.
 type GameSnapshot struct {
 	Turn              string                        `json:"turn"`
 	GameOver          *gameOverResponse             `json:"gameOver"`
 	BoardSize         int                           `json:"boardSize"`
-	BoardCells        []boardCell                   `json:"boardCells"`
+	CaptureColumns    int                           `json:"captureColumns"`
+	Pieces            []gamePiece                   `json:"pieces"`
 	LegalMovesByPiece map[string][]legalMoveSummary `json:"legalMovesByPiece"`
-	// CapturedRedPieces/CapturedBlackPieces list captured pieces in the order
-	// they were captured, for rendering beside the board.
-	CapturedRedPieces   []boardPiece `json:"capturedRedPieces"`
-	CapturedBlackPieces []boardPiece `json:"capturedBlackPieces"`
 }
 
 type gameOverResponse struct {
@@ -79,19 +83,16 @@ type applyMoveRequest struct {
 	Path []squarePosition `json:"path"`
 }
 
-type boardCell struct {
-	Row         int         `json:"row"`
-	Col         int         `json:"col"`
-	IsDark      bool        `json:"isDark"`
-	Piece       *boardPiece `json:"piece,omitempty"`
-	SquareLabel string      `json:"squareLabel"`
-}
-
-type boardPiece struct {
+// gamePiece is the serializable form of a single piece, whether it's
+// currently on the board or set aside as captured - both share the same
+// Row/Col position fields, using the extended grid described on GameSnapshot.
+type gamePiece struct {
 	ID      string `json:"id"`
 	Side    string `json:"side"`
 	Kind    string `json:"kind"`
 	Classes string `json:"classes"`
+	Row     int    `json:"row"`
+	Col     int    `json:"col"`
 }
 
 type errorResponse struct {
@@ -308,34 +309,23 @@ func buildAppSnapshot(state appState) AppSnapshot {
 }
 
 func buildGameSnapshot(game *gameengine.Game) GameSnapshot {
-	piecesByPosition := make(map[gameengine.Position]gameengine.Piece, len(game.Pieces))
+	// activeByPosition only holds non-captured pieces: captured pieces have no
+	// legal moves, and gameengine already gives them an extended-grid Position
+	// (in the capture columns) that's disjoint from any real board position.
+	activeByPosition := make(map[gameengine.Position]gameengine.Piece, len(game.Pieces))
+	pieces := make([]gamePiece, 0, len(game.Pieces))
 	for _, piece := range game.Pieces {
-		if piece.Captured {
-			continue
+		if !piece.Captured {
+			activeByPosition[piece.Position] = piece
 		}
-		piecesByPosition[piece.Position] = piece
-	}
-
-	cells := make([]boardCell, 0, game.BoardSize*game.BoardSize)
-	for row := game.BoardSize - 1; row >= 0; row-- {
-		for col := 0; col < game.BoardSize; col++ {
-			position := gameengine.Position{Row: row, Col: col}
-			cell := boardCell{
-				Row:         row,
-				Col:         col,
-				IsDark:      (row+col)%2 == 0,
-				SquareLabel: squareLabel(position),
-			}
-			if piece, ok := piecesByPosition[position]; ok {
-				cell.Piece = &boardPiece{
-					ID:      piece.ID,
-					Side:    string(piece.Side),
-					Kind:    string(piece.Kind),
-					Classes: pieceClasses(piece),
-				}
-			}
-			cells = append(cells, cell)
-		}
+		pieces = append(pieces, gamePiece{
+			ID:      piece.ID,
+			Side:    string(piece.Side),
+			Kind:    string(piece.Kind),
+			Classes: pieceClasses(piece),
+			Row:     piece.Position.Row,
+			Col:     piece.Position.Col,
+		})
 	}
 
 	legalMovesByPiece := make(map[string][]legalMoveSummary)
@@ -343,7 +333,7 @@ func buildGameSnapshot(game *gameengine.Game) GameSnapshot {
 		if len(move) < 2 {
 			continue
 		}
-		piece, ok := piecesByPosition[move[0]]
+		piece, ok := activeByPosition[move[0]]
 		if !ok {
 			continue
 		}
@@ -363,33 +353,13 @@ func buildGameSnapshot(game *gameengine.Game) GameSnapshot {
 	}
 
 	return GameSnapshot{
-		Turn:                titleCaseTurn(game.Turn),
-		BoardSize:           game.BoardSize,
-		BoardCells:          cells,
-		LegalMovesByPiece:   legalMovesByPiece,
-		GameOver:            gameOver,
-		CapturedRedPieces:   capturedBoardPieces(game.CapturedRedPieces()),
-		CapturedBlackPieces: capturedBoardPieces(game.CapturedBlackPieces()),
+		Turn:              titleCaseTurn(game.Turn),
+		BoardSize:         game.BoardSize,
+		CaptureColumns:    game.CaptureColumns,
+		Pieces:            pieces,
+		LegalMovesByPiece: legalMovesByPiece,
+		GameOver:          gameOver,
 	}
-}
-
-// capturedBoardPieces converts captured pieces (in capture order) into the
-// serializable boardPiece form used for rendering beside the board.
-func capturedBoardPieces(pieces []*gameengine.Piece) []boardPiece {
-	result := make([]boardPiece, 0, len(pieces))
-	for _, piece := range pieces {
-		result = append(result, boardPiece{
-			ID:      piece.ID,
-			Side:    string(piece.Side),
-			Kind:    string(piece.Kind),
-			Classes: pieceClasses(*piece),
-		})
-	}
-	return result
-}
-
-func squareLabel(position gameengine.Position) string {
-	return string(rune('a'+position.Col)) + string(rune('1'+position.Row))
 }
 
 func pieceClasses(piece gameengine.Piece) string {

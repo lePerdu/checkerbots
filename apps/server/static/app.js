@@ -1,9 +1,5 @@
 const boardElement = document.getElementById('board');
 const robotBoardElement = document.getElementById('robot-board');
-const capturedBlackOuterElement = document.querySelector('#captured-black .captured-column--outer');
-const capturedBlackInnerElement = document.querySelector('#captured-black .captured-column--inner');
-const capturedRedOuterElement = document.querySelector('#captured-red .captured-column--outer');
-const capturedRedInnerElement = document.querySelector('#captured-red .captured-column--inner');
 const newGameButton = document.getElementById('new-game-button');
 const cancelMoveButton = document.getElementById('cancel-move-button');
 const messageLabel = document.getElementById('message-label');
@@ -12,7 +8,7 @@ let currentBoardState = null;
 
 // Robot state
 let currentRobots = new Map(); // robotId -> RobotInfo
-let boardConfig = { boardSize: 8, cellSizeMM: 450, robotDiameterMM: 340 };
+let boardConfig = { boardSize: 8, captureColumns: 0, cellSizeMM: 450, robotDiameterMM: 340 };
 
 // A move in progress. `selectedPieceId` is set as soon as a piece is picked,
 // and stays set until the move is explicitly cancelled or accepted - clicking
@@ -27,6 +23,12 @@ let candidateMoves = [];
 
 function squareKey(row, col) {
   return `${row},${col}`;
+}
+
+// Label for an actual checkers square, e.g. "a1". Only meaningful for
+// columns within the board itself (not the capture columns beside it).
+function squareLabel(row, col) {
+  return `${String.fromCharCode(97 + col)}${row + 1}`;
 }
 
 function clearSelection() {
@@ -68,10 +70,6 @@ function jumpedSquareKeysInPath() {
   return keys;
 }
 
-function findCellWithPiece(boardCells, pieceId) {
-  return boardCells.find((cell) => cell.piece && cell.piece.id === pieceId) ?? null;
-}
-
 function updateMoveControls() {
   if (cancelMoveButton) {
     cancelMoveButton.disabled = !selectedPieceId;
@@ -83,15 +81,24 @@ function renderBoard() {
     return;
   }
 
-  const boardCells = Array.isArray(currentBoardState.boardCells) ? currentBoardState.boardCells : [];
+  const pieces = Array.isArray(currentBoardState.pieces) ? currentBoardState.pieces : [];
   const boardSize = Number.isInteger(currentBoardState.boardSize) && currentBoardState.boardSize > 0 ? currentBoardState.boardSize : 8;
+  const captureColumns = Number.isInteger(currentBoardState.captureColumns) && currentBoardState.captureColumns >= 0
+    ? currentBoardState.captureColumns
+    : 0;
+  const totalCols = boardSize + 2 * captureColumns;
+
+  // Pieces (on-board or captured) all carry a Row/Col position resolved by
+  // the server, on the same extended grid rendered below.
+  const piecesByPosition = new Map(pieces.map((piece) => [squareKey(piece.row, piece.col), piece]));
+
   const pathSquareKeys = new Set(movePath.map((position) => squareKey(position.row, position.col)));
   const currentSquareKey = movePath.length > 0 ? squareKey(movePath[movePath.length - 1].row, movePath[movePath.length - 1].col) : null;
   const legalNextSquareKeys = selectedPieceId ? nextStepSquareKeys() : new Set();
   const hasMoved = movePath.length > 1;
   const originSquareKey = movePath.length > 0 ? squareKey(movePath[0].row, movePath[0].col) : null;
   const jumpedSquareKeys = hasMoved ? jumpedSquareKeysInPath() : new Set();
-  const activePieceCell = hasMoved && selectedPieceId ? findCellWithPiece(boardCells, selectedPieceId) : null;
+  const activePiece = hasMoved && selectedPieceId ? pieces.find((piece) => piece.id === selectedPieceId) ?? null : null;
   // Only ring pieces when no piece is selected yet.
   const moveablePieceIds = selectedPieceId
     ? new Set()
@@ -106,89 +113,69 @@ function renderBoard() {
   }
 
   boardElement.replaceChildren();
-  boardElement.style.gridTemplateColumns = `repeat(${boardSize}, 1fr)`;
+  boardElement.style.gridTemplateColumns = `repeat(${totalCols}, 1fr)`;
   boardElement.style.gridTemplateRows = `repeat(${boardSize}, 1fr)`;
+  boardElement.style.aspectRatio = `${totalCols} / ${boardSize}`;
 
-  for (const cell of boardCells) {
-    const key = squareKey(cell.row, cell.col);
-    const square = document.createElement('div');
-    square.className = `square ${cell.isDark ? 'square--dark' : 'square--light'}`;
-    square.setAttribute('role', 'gridcell');
-    square.setAttribute('aria-label', `Square ${cell.squareLabel}`);
-    square.dataset.row = String(cell.row);
-    square.dataset.col = String(cell.col);
+  for (let row = boardSize - 1; row >= 0; row--) {
+    for (let col = -captureColumns; col < boardSize + captureColumns; col++) {
+      const key = squareKey(row, col);
+      const isBoardSquare = col >= 0 && col < boardSize;
+      const square = document.createElement('div');
+      square.dataset.row = String(row);
+      square.dataset.col = String(col);
 
-    // Reflect the in-progress move: the active piece visually sits at the
-    // last clicked square rather than its server-side origin, and any piece
-    // it jumped over so far is hidden even though it isn't captured yet.
-    let piece = cell.piece;
-    if (piece && jumpedSquareKeys.has(key)) {
-      piece = null;
-    } else if (piece && hasMoved && key === originSquareKey) {
-      piece = null;
-    } else if (!piece && hasMoved && key === currentSquareKey && activePieceCell) {
-      piece = activePieceCell.piece;
-    }
-
-    if (piece) {
-      square.dataset.pieceId = piece.id;
-    }
-
-    if (key !== currentSquareKey && pathSquareKeys.has(key)) {
-      square.classList.add('square--path');
-    }
-
-    if (legalNextSquareKeys.has(key)) {
-      square.classList.add('square--legal-move');
-    }
-
-    if (piece) {
-      const pieceElement = document.createElement('div');
-      pieceElement.className = typeof piece.classes === 'string' ? piece.classes : 'piece';
-      if (key === currentSquareKey) {
-        pieceElement.classList.add('piece--selected');
-      } else if (moveablePieceIds.has(piece.id)) {
-        pieceElement.classList.add('piece--moveable');
+      if (isBoardSquare) {
+        const isDark = (row + col) % 2 === 0;
+        square.className = `square ${isDark ? 'square--dark' : 'square--light'}`;
+        square.setAttribute('role', 'gridcell');
+        square.setAttribute('aria-label', `Square ${squareLabel(row, col)}`);
+      } else {
+        square.className = 'square square--capture';
+        square.setAttribute('aria-label', 'Capture area');
       }
-      pieceElement.setAttribute('aria-label', `${piece.side} ${piece.kind}`);
-      square.appendChild(pieceElement);
+
+      // Reflect the in-progress move: the active piece visually sits at the
+      // last clicked square rather than its server-side origin, and any piece
+      // it jumped over so far is hidden even though it isn't captured yet.
+      let piece = piecesByPosition.get(key) ?? null;
+      if (piece && jumpedSquareKeys.has(key)) {
+        piece = null;
+      } else if (piece && hasMoved && key === originSquareKey) {
+        piece = null;
+      } else if (!piece && hasMoved && key === currentSquareKey && activePiece) {
+        piece = activePiece;
+      }
+
+      if (piece) {
+        square.dataset.pieceId = piece.id;
+      }
+
+      if (key !== currentSquareKey && pathSquareKeys.has(key)) {
+        square.classList.add('square--path');
+      }
+
+      if (legalNextSquareKeys.has(key)) {
+        square.classList.add('square--legal-move');
+      }
+
+      if (piece) {
+        const pieceElement = document.createElement('div');
+        pieceElement.className = typeof piece.classes === 'string' ? piece.classes : 'piece';
+        if (key === currentSquareKey) {
+          pieceElement.classList.add('piece--selected');
+        } else if (moveablePieceIds.has(piece.id)) {
+          pieceElement.classList.add('piece--moveable');
+        }
+        pieceElement.setAttribute('aria-label', `${piece.side} ${piece.kind}`);
+        square.appendChild(pieceElement);
+      }
+
+      boardElement.appendChild(square);
     }
-
-    boardElement.appendChild(square);
   }
 
-  renderCapturedPieces();
   updateMoveControls();
-}
-
-// Fills a pair of columns (outer, then inner) with up to 6 captured-piece
-// elements each, so the outer column (farther from the board) fills first.
-function renderCapturedColumn(outerElement, innerElement, pieces) {
-  if (!outerElement || !innerElement) {
-    return;
-  }
-
-  outerElement.replaceChildren();
-  innerElement.replaceChildren();
-
-  pieces.forEach((piece, index) => {
-    const pieceElement = document.createElement('div');
-    pieceElement.className = `${typeof piece.classes === 'string' ? piece.classes : 'piece'} captured-piece`;
-    pieceElement.setAttribute('aria-label', `Captured ${piece.side} ${piece.kind}`);
-    const column = index < 6 ? outerElement : innerElement;
-    column.appendChild(pieceElement);
-  });
-}
-
-function renderCapturedPieces() {
-  if (!currentBoardState) {
-    return;
-  }
-
-  const capturedRedPieces = Array.isArray(currentBoardState.capturedRedPieces) ? currentBoardState.capturedRedPieces : [];
-  const capturedBlackPieces = Array.isArray(currentBoardState.capturedBlackPieces) ? currentBoardState.capturedBlackPieces : [];
-  renderCapturedColumn(capturedRedOuterElement, capturedRedInnerElement, capturedRedPieces);
-  renderCapturedColumn(capturedBlackOuterElement, capturedBlackInnerElement, capturedBlackPieces);
 }
 
 function selectPiece(pieceId, row, col) {
@@ -356,12 +343,20 @@ document.addEventListener('keydown', (event) => {
 
 // Returns the CSS left/top percentages and width percentage for a robot,
 // relative to the robot board element (0,0 = top-left corner).
+//
+// The robot board is widened by capture columns on each side, just like the
+// game board, so its width in mm covers more than just the actual board -
+// but since those columns are added symmetrically, the board's horizontal
+// center still lines up with the container's. Only horizontal scaling needs
+// the wider total; rows (and so vertical scaling) are unaffected.
 function robotCSSPercent(robot) {
-  const totalMM = boardConfig.boardSize * boardConfig.cellSizeMM;
-  const leftPct = 50 + (robot.pose.x_mm / totalMM) * 100;
+  const boardHeightMM = boardConfig.boardSize * boardConfig.cellSizeMM;
+  const totalCols = boardConfig.boardSize + 2 * boardConfig.captureColumns;
+  const containerWidthMM = totalCols * boardConfig.cellSizeMM;
+  const leftPct = 50 + (robot.pose.x_mm / containerWidthMM) * 100;
   // Game Y increases upward; CSS top increases downward.
-  const topPct = 50 - (robot.pose.y_mm / totalMM) * 100;
-  const sizePct = (boardConfig.robotDiameterMM / totalMM) * 100;
+  const topPct = 50 - (robot.pose.y_mm / boardHeightMM) * 100;
+  const sizePct = (boardConfig.robotDiameterMM / containerWidthMM) * 100;
   return { leftPct, topPct, sizePct };
 }
 
@@ -384,17 +379,32 @@ function syncRobotElement(robot) {
 }
 
 // Renders the checkerboard grid of the robot board and all current robots.
+//
+// Mirrors the game board: extended by capture columns on each side (kept
+// empty here, with a neutral background) so the two boards line up.
 function renderRobotBoard() {
   if (!robotBoardElement || !currentBoardState) return;
   const boardSize = currentBoardState.boardSize || boardConfig.boardSize;
+  const captureColumns = currentBoardState.captureColumns ?? boardConfig.captureColumns;
+  const totalCols = boardSize + 2 * captureColumns;
+
   robotBoardElement.replaceChildren();
-  robotBoardElement.style.gridTemplateColumns = `repeat(${boardSize}, 1fr)`;
+  robotBoardElement.style.gridTemplateColumns = `repeat(${totalCols}, 1fr)`;
   robotBoardElement.style.gridTemplateRows = `repeat(${boardSize}, 1fr)`;
-  const boardCells = Array.isArray(currentBoardState.boardCells) ? currentBoardState.boardCells : [];
-  for (const cell of boardCells) {
-    const square = document.createElement('div');
-    square.className = `square ${cell.isDark ? 'square--dark' : 'square--light'}`;
-    robotBoardElement.appendChild(square);
+  robotBoardElement.style.aspectRatio = `${totalCols} / ${boardSize}`;
+
+  for (let row = boardSize - 1; row >= 0; row--) {
+    for (let col = -captureColumns; col < boardSize + captureColumns; col++) {
+      const square = document.createElement('div');
+      const isBoardSquare = col >= 0 && col < boardSize;
+      if (isBoardSquare) {
+        const isDark = (row + col) % 2 === 0;
+        square.className = `square ${isDark ? 'square--dark' : 'square--light'}`;
+      } else {
+        square.className = 'square square--capture';
+      }
+      robotBoardElement.appendChild(square);
+    }
   }
   for (const robot of currentRobots.values()) {
     syncRobotElement(robot);
@@ -415,6 +425,7 @@ function loadEventStream() {
     if (typeof snapshot.cellSizeMM === 'number') boardConfig.cellSizeMM = snapshot.cellSizeMM;
     if (typeof snapshot.robotDiameterMM === 'number') boardConfig.robotDiameterMM = snapshot.robotDiameterMM;
     if (snapshot.game && typeof snapshot.game.boardSize === 'number') boardConfig.boardSize = snapshot.game.boardSize;
+    if (snapshot.game && typeof snapshot.game.captureColumns === 'number') boardConfig.captureColumns = snapshot.game.captureColumns;
     currentRobots.clear();
     for (const robot of (snapshot.robots || [])) {
       currentRobots.set(robot.id, robot);
@@ -427,6 +438,7 @@ function loadEventStream() {
   stream.addEventListener('game.updated', event => {
     currentBoardState = JSON.parse(event.data);
     if (typeof currentBoardState.boardSize === 'number') boardConfig.boardSize = currentBoardState.boardSize;
+    if (typeof currentBoardState.captureColumns === 'number') boardConfig.captureColumns = currentBoardState.captureColumns;
     clearSelection();
     renderBoard();
     // Re-render the checkerboard cells; robot.updated events will reposition robots.

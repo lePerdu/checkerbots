@@ -238,18 +238,19 @@ func TestApplyMoveMovesPieceAndAdvancesTurn(t *testing.T) {
 		t.Fatalf("expected no active piece to remain at %+v after move", move[0])
 	}
 
-	if len(game.CapturedRedPieces()) != 0 {
-		t.Fatalf("expected no captured red pieces, got %+v", game.CapturedRedPieces())
+	if countCaptured(game.Pieces, PlayerSideRed) != 0 {
+		t.Fatalf("expected 0 captured red pieces, got %d", countCaptured(game.Pieces, PlayerSideRed))
 	}
-	if len(game.CapturedBlackPieces()) != 0 {
-		t.Fatalf("expected no captured black pieces, got %+v", game.CapturedBlackPieces())
+	if countCaptured(game.Pieces, PlayerSideBlack) != 0 {
+		t.Fatalf("expected 0 captured black pieces, got %d", countCaptured(game.Pieces, PlayerSideBlack))
 	}
 }
 
 func TestApplyMoveCapturesOpponentPiece(t *testing.T) {
 	game := GameFromStored(StoredGame{
-		Turn:      PlayerSideBlack,
-		BoardSize: 8,
+		Turn:           PlayerSideBlack,
+		BoardSize:      8,
+		CaptureColumns: 2,
 		Pieces: []Piece{
 			{ID: "black-1", Side: PlayerSideBlack, Kind: PieceKindMan, Position: Position{Row: 2, Col: 0}},
 			{ID: "red-1", Side: PlayerSideRed, Kind: PieceKindMan, Position: Position{Row: 3, Col: 1}},
@@ -272,6 +273,9 @@ func TestApplyMoveCapturesOpponentPiece(t *testing.T) {
 	}
 	assertMoveEqual(t, game.MoveHistory[0], move)
 
+	// The captured piece is placed in the outer capture column beside the
+	// board (row 0, farthest column) - see capturedPiecePosition.
+	wantCapturedPosition := Position{Row: 0, Col: 9}
 	for _, piece := range game.Pieces {
 		switch piece.ID {
 		case "black-1":
@@ -282,18 +286,17 @@ func TestApplyMoveCapturesOpponentPiece(t *testing.T) {
 			if !piece.Captured {
 				t.Fatalf("expected jumped piece to be marked captured")
 			}
+			if piece.Position != wantCapturedPosition {
+				t.Fatalf("expected captured piece at %+v, got %+v", wantCapturedPosition, piece.Position)
+			}
 		}
 	}
 
-	capturedRed := game.CapturedRedPieces()
-	if len(capturedRed) != 1 || capturedRed[0].ID != "red-1" {
-		t.Fatalf("expected captured red pieces [red-1], got %+v", capturedRed)
+	if countCaptured(game.Pieces, PlayerSideRed) != 1 {
+		t.Fatalf("expected 1 captured red piece, got %d", countCaptured(game.Pieces, PlayerSideRed))
 	}
-	if !capturedRed[0].Captured {
-		t.Fatalf("expected captured red piece to be marked captured")
-	}
-	if len(game.CapturedBlackPieces()) != 0 {
-		t.Fatalf("expected no captured black pieces, got %+v", game.CapturedBlackPieces())
+	if countCaptured(game.Pieces, PlayerSideBlack) != 0 {
+		t.Fatalf("expected 0 captured black pieces, got %d", countCaptured(game.Pieces, PlayerSideBlack))
 	}
 }
 
@@ -486,8 +489,9 @@ func TestGetLegalMovesAllowsDifferentLengthJumpSequencesSimultaneously(t *testin
 
 func TestApplyMoveAppliesMultiStepJumpSequence(t *testing.T) {
 	game := GameFromStored(StoredGame{
-		Turn:      PlayerSideBlack,
-		BoardSize: 8,
+		Turn:           PlayerSideBlack,
+		BoardSize:      8,
+		CaptureColumns: 2,
 		Pieces: []Piece{
 			{ID: "black-1", Side: PlayerSideBlack, Kind: PieceKindMan, Position: Position{Row: 0, Col: 2}},
 			{ID: "red-1", Side: PlayerSideRed, Kind: PieceKindMan, Position: Position{Row: 1, Col: 3}},
@@ -508,6 +512,12 @@ func TestApplyMoveAppliesMultiStepJumpSequence(t *testing.T) {
 
 	assertMoveEqual(t, game.MoveHistory[0], move)
 
+	// Captured pieces fill the outer capture column from the bottom row up,
+	// in capture order - see capturedPiecePosition.
+	wantCapturedPositions := map[string]Position{
+		"red-1": {Row: 0, Col: 9},
+		"red-2": {Row: 1, Col: 9},
+	}
 	for _, piece := range game.Pieces {
 		switch piece.ID {
 		case "black-1":
@@ -518,21 +528,17 @@ func TestApplyMoveAppliesMultiStepJumpSequence(t *testing.T) {
 			if !piece.Captured {
 				t.Fatalf("expected piece %q to be captured", piece.ID)
 			}
+			if want := wantCapturedPositions[piece.ID]; piece.Position != want {
+				t.Fatalf("expected captured piece %q at %+v, got %+v", piece.ID, want, piece.Position)
+			}
 		}
 	}
 
-	capturedRed := game.CapturedRedPieces()
-	wantCapturedIDs := []string{"red-1", "red-2"}
-	if len(capturedRed) != len(wantCapturedIDs) {
-		t.Fatalf("expected %d captured red pieces, got %+v", len(wantCapturedIDs), capturedRed)
+	if countCaptured(game.Pieces, PlayerSideRed) != 2 {
+		t.Fatalf("expected 2 captured red pieces, got %d", countCaptured(game.Pieces, PlayerSideRed))
 	}
-	for i, id := range wantCapturedIDs {
-		if capturedRed[i].ID != id {
-			t.Fatalf("expected captured red piece %d to be %q, got %q", i, id, capturedRed[i].ID)
-		}
-	}
-	if len(game.CapturedBlackPieces()) != 0 {
-		t.Fatalf("expected no captured black pieces, got %+v", game.CapturedBlackPieces())
+	if countCaptured(game.Pieces, PlayerSideBlack) != 0 {
+		t.Fatalf("expected 0 captured black pieces, got %d", countCaptured(game.Pieces, PlayerSideBlack))
 	}
 }
 
@@ -561,8 +567,9 @@ func TestApplyMoveRejectsMultiStepMoveNotInLegalMoves(t *testing.T) {
 
 func TestCapturedPiecesAreTrackedIndependentlyPerSideAcrossMoves(t *testing.T) {
 	game := GameFromStored(StoredGame{
-		Turn:      PlayerSideBlack,
-		BoardSize: 8,
+		Turn:           PlayerSideBlack,
+		BoardSize:      8,
+		CaptureColumns: 2,
 		Pieces: []Piece{
 			{ID: "black-1", Side: PlayerSideBlack, Kind: PieceKindMan, Position: Position{Row: 2, Col: 0}},
 			{ID: "black-2", Side: PlayerSideBlack, Kind: PieceKindMan, Position: Position{Row: 4, Col: 4}},
@@ -579,55 +586,75 @@ func TestCapturedPiecesAreTrackedIndependentlyPerSideAcrossMoves(t *testing.T) {
 		t.Fatalf("expected red capture to be applied, got error: %v", err)
 	}
 
-	capturedRed := game.CapturedRedPieces()
-	if len(capturedRed) != 1 || capturedRed[0].ID != "red-1" {
-		t.Fatalf("expected captured red pieces [red-1], got %+v", capturedRed)
+	if countCaptured(game.Pieces, PlayerSideRed) != 1 {
+		t.Fatalf("expected 1 captured red piece, got %d", countCaptured(game.Pieces, PlayerSideRed))
+	}
+	if countCaptured(game.Pieces, PlayerSideBlack) != 1 {
+		t.Fatalf("expected 1 captured black piece, got %d", countCaptured(game.Pieces, PlayerSideBlack))
 	}
 
-	capturedBlack := game.CapturedBlackPieces()
-	if len(capturedBlack) != 1 || capturedBlack[0].ID != "black-2" {
-		t.Fatalf("expected captured black pieces [black-2], got %+v", capturedBlack)
+	// Each side's first capture lands in its own outer column, at the row
+	// closest to the board on that side - see capturedPiecePosition.
+	wantPositions := map[string]Position{
+		"red-1":   {Row: 0, Col: 9},
+		"black-2": {Row: 7, Col: -2},
+	}
+	for _, piece := range game.Pieces {
+		want, ok := wantPositions[piece.ID]
+		if !ok {
+			continue
+		}
+		if !piece.Captured {
+			t.Fatalf("expected piece %q to be captured", piece.ID)
+		}
+		if piece.Position != want {
+			t.Fatalf("expected captured piece %q at %+v, got %+v", piece.ID, want, piece.Position)
+		}
 	}
 }
 
-func TestGameFromStoredResolvesCapturedPiecesWithoutDuplicatingObjects(t *testing.T) {
+// The next captured piece's slot is derived by scanning Pieces (see
+// capturedCount), not from any persisted counter, so it must still be
+// correct for a game that's been saved and reloaded.
+func TestGameFromStoredPreservesCapturedPiecePositionsAcrossReload(t *testing.T) {
 	game := GameFromStored(StoredGame{
-		Turn:      PlayerSideBlack,
-		BoardSize: 8,
+		Turn:           PlayerSideBlack,
+		BoardSize:      8,
+		CaptureColumns: 2,
 		Pieces: []Piece{
 			{ID: "black-1", Side: PlayerSideBlack, Kind: PieceKindMan, Position: Position{Row: 2, Col: 0}},
+			{ID: "black-2", Side: PlayerSideBlack, Kind: PieceKindMan, Position: Position{Row: 4, Col: 4}},
 			{ID: "red-1", Side: PlayerSideRed, Kind: PieceKindMan, Position: Position{Row: 3, Col: 1}},
+			{ID: "red-2", Side: PlayerSideRed, Kind: PieceKindMan, Position: Position{Row: 5, Col: 5}},
 		},
 		MoveHistory: []Move{},
 	})
 
 	if err := ApplyMove(&game, Move{{Row: 2, Col: 0}, {Row: 4, Col: 2}}); err != nil {
-		t.Fatalf("expected capture move to be applied, got error: %v", err)
+		t.Fatalf("expected black capture to be applied, got error: %v", err)
 	}
 
-	stored := GameToStored(game)
-	if len(stored.CapturedRedPieceIndices) != 1 {
-		t.Fatalf("expected 1 captured red piece index in stored game, got %+v", stored.CapturedRedPieceIndices)
+	reloaded := GameFromStored(GameToStored(game))
+
+	if err := ApplyMove(&reloaded, Move{{Row: 5, Col: 5}, {Row: 3, Col: 3}}); err != nil {
+		t.Fatalf("expected red capture to be applied after reload, got error: %v", err)
 	}
 
-	reloaded := GameFromStored(stored)
-
-	capturedRed := reloaded.CapturedRedPieces()
-	if len(capturedRed) != 1 || capturedRed[0].ID != "red-1" {
-		t.Fatalf("expected reloaded captured red pieces [red-1], got %+v", capturedRed)
+	wantPositions := map[string]Position{
+		"red-1":   {Row: 0, Col: 9},
+		"black-2": {Row: 7, Col: -2},
 	}
-	if !capturedRed[0].Captured {
-		t.Fatalf("expected reloaded captured piece to be marked captured")
-	}
-
-	var redPiece *Piece
-	for i := range reloaded.Pieces {
-		if reloaded.Pieces[i].ID == "red-1" {
-			redPiece = &reloaded.Pieces[i]
+	for _, piece := range reloaded.Pieces {
+		want, ok := wantPositions[piece.ID]
+		if !ok {
+			continue
 		}
-	}
-	if capturedRed[0] != redPiece {
-		t.Fatalf("expected captured piece reference to point into reloaded.Pieces, got a distinct object")
+		if !piece.Captured {
+			t.Fatalf("expected piece %q to be captured", piece.ID)
+		}
+		if piece.Position != want {
+			t.Fatalf("expected captured piece %q at %+v, got %+v", piece.ID, want, piece.Position)
+		}
 	}
 }
 
