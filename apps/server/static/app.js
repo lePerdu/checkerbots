@@ -1,5 +1,9 @@
 const boardElement = document.getElementById('board');
 const robotBoardElement = document.getElementById('robot-board');
+const capturedBlackOuterElement = document.querySelector('#captured-black .captured-column--outer');
+const capturedBlackInnerElement = document.querySelector('#captured-black .captured-column--inner');
+const capturedRedOuterElement = document.querySelector('#captured-red .captured-column--outer');
+const capturedRedInnerElement = document.querySelector('#captured-red .captured-column--inner');
 const newGameButton = document.getElementById('new-game-button');
 const cancelMoveButton = document.getElementById('cancel-move-button');
 const messageLabel = document.getElementById('message-label');
@@ -153,9 +157,39 @@ function renderBoard() {
     boardElement.appendChild(square);
   }
 
+  renderCapturedPieces();
   updateMoveControls();
 }
 
+// Fills a pair of columns (outer, then inner) with up to 6 captured-piece
+// elements each, so the outer column (farther from the board) fills first.
+function renderCapturedColumn(outerElement, innerElement, pieces) {
+  if (!outerElement || !innerElement) {
+    return;
+  }
+
+  outerElement.replaceChildren();
+  innerElement.replaceChildren();
+
+  pieces.forEach((piece, index) => {
+    const pieceElement = document.createElement('div');
+    pieceElement.className = `${typeof piece.classes === 'string' ? piece.classes : 'piece'} captured-piece`;
+    pieceElement.setAttribute('aria-label', `Captured ${piece.side} ${piece.kind}`);
+    const column = index < 6 ? outerElement : innerElement;
+    column.appendChild(pieceElement);
+  });
+}
+
+function renderCapturedPieces() {
+  if (!currentBoardState) {
+    return;
+  }
+
+  const capturedRedPieces = Array.isArray(currentBoardState.capturedRedPieces) ? currentBoardState.capturedRedPieces : [];
+  const capturedBlackPieces = Array.isArray(currentBoardState.capturedBlackPieces) ? currentBoardState.capturedBlackPieces : [];
+  renderCapturedColumn(capturedRedOuterElement, capturedRedInnerElement, capturedRedPieces);
+  renderCapturedColumn(capturedBlackOuterElement, capturedBlackInnerElement, capturedBlackPieces);
+}
 
 function selectPiece(pieceId, row, col) {
   const legalMovesByPiece = currentBoardState && typeof currentBoardState === 'object'

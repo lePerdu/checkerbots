@@ -52,6 +52,10 @@ type GameSnapshot struct {
 	BoardSize         int                           `json:"boardSize"`
 	BoardCells        []boardCell                   `json:"boardCells"`
 	LegalMovesByPiece map[string][]legalMoveSummary `json:"legalMovesByPiece"`
+	// CapturedRedPieces/CapturedBlackPieces list captured pieces in the order
+	// they were captured, for rendering beside the board.
+	CapturedRedPieces   []boardPiece `json:"capturedRedPieces"`
+	CapturedBlackPieces []boardPiece `json:"capturedBlackPieces"`
 }
 
 type gameOverResponse struct {
@@ -359,12 +363,29 @@ func buildGameSnapshot(game *gameengine.Game) GameSnapshot {
 	}
 
 	return GameSnapshot{
-		Turn:              titleCaseTurn(game.Turn),
-		BoardSize:         game.BoardSize,
-		BoardCells:        cells,
-		LegalMovesByPiece: legalMovesByPiece,
-		GameOver:          gameOver,
+		Turn:                titleCaseTurn(game.Turn),
+		BoardSize:           game.BoardSize,
+		BoardCells:          cells,
+		LegalMovesByPiece:   legalMovesByPiece,
+		GameOver:            gameOver,
+		CapturedRedPieces:   capturedBoardPieces(game.CapturedRedPieces()),
+		CapturedBlackPieces: capturedBoardPieces(game.CapturedBlackPieces()),
 	}
+}
+
+// capturedBoardPieces converts captured pieces (in capture order) into the
+// serializable boardPiece form used for rendering beside the board.
+func capturedBoardPieces(pieces []*gameengine.Piece) []boardPiece {
+	result := make([]boardPiece, 0, len(pieces))
+	for _, piece := range pieces {
+		result = append(result, boardPiece{
+			ID:      piece.ID,
+			Side:    string(piece.Side),
+			Kind:    string(piece.Kind),
+			Classes: pieceClasses(*piece),
+		})
+	}
+	return result
 }
 
 func squareLabel(position gameengine.Position) string {
