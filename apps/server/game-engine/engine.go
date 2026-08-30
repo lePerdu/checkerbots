@@ -355,6 +355,7 @@ func ApplyMove(game *Game, move Move) *ApplyMoveError {
 			return &ApplyMoveError{Reason: "cannot capture your own piece"}
 		}
 		updatedPieces[capturedIndex].Captured = true
+		recordCapture(game, updatedPieces[capturedIndex].Side, capturedIndex)
 	}
 
 	if to.Row == kingRow(piece.Side) {
@@ -368,6 +369,16 @@ func ApplyMove(game *Game, move Move) *ApplyMoveError {
 	computeLegalMoves(game)
 
 	return nil
+}
+
+// recordCapture appends a captured piece's index to the appropriate side's
+// capture-order list, used later by Game.CapturedRedPieces/CapturedBlackPieces.
+func recordCapture(game *Game, capturedSide PlayerSide, pieceIndex int) {
+	if capturedSide == PlayerSideRed {
+		game.CapturedRedPieceIndices = append(game.CapturedRedPieceIndices, pieceIndex)
+		return
+	}
+	game.CapturedBlackPieceIndices = append(game.CapturedBlackPieceIndices, pieceIndex)
 }
 
 // applyMultiStepMove applies a move with more than 2 positions, i.e. a
@@ -407,6 +418,7 @@ func applyMultiStepMove(game *Game, move Move) *ApplyMoveError {
 			return &ApplyMoveError{Reason: "jump requires a piece to capture"}
 		}
 		updatedPieces[capturedIndex].Captured = true
+		recordCapture(game, updatedPieces[capturedIndex].Side, capturedIndex)
 	}
 
 	destination := matched[len(matched)-1]

@@ -1,6 +1,8 @@
 package main
 
-import "time"
+import (
+	"time"
+)
 
 // CoordinateFrame names the frame a pose is expressed in.
 type CoordinateFrame string

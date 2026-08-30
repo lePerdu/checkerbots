@@ -67,6 +67,26 @@ type Game struct {
 	LegalMoves []Move
 }
 
+// CapturedRedPieces returns references to captured red pieces, in the order
+// they were captured.
+func (g *Game) CapturedRedPieces() []*Piece {
+	pieces := make([]*Piece, len(g.CapturedRedPieceIndices))
+	for i, index := range g.CapturedRedPieceIndices {
+		pieces[i] = &g.Pieces[index]
+	}
+	return pieces
+}
+
+// CapturedBlackPieces returns references to captured black pieces, in the
+// order they were captured.
+func (g *Game) CapturedBlackPieces() []*Piece {
+	pieces := make([]*Piece, len(g.CapturedBlackPieceIndices))
+	for i, index := range g.CapturedBlackPieceIndices {
+		pieces[i] = &g.Pieces[index]
+	}
+	return pieces
+}
+
 // GameOver summarizes terminal-game evaluation without committing future tasks to
 // a richer result model yet.
 type GameOver struct {
@@ -80,6 +100,10 @@ type StoredGame struct {
 	BoardSize   int
 	Pieces      []Piece
 	MoveHistory []Move
+	// Indices into Pieces of captured pieces, in the order they were
+	// captured.
+	CapturedRedPieceIndices   []int
+	CapturedBlackPieceIndices []int
 	// `nil` if game is in-progress
 	GameOver *GameOver
 }
