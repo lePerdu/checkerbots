@@ -144,13 +144,13 @@ type stateManager struct {
 	cmds chan any
 }
 
-func newStateManager() *stateManager {
-	return &stateManager{cmds: make(chan any)}
+func newStateManager() stateManager {
+	return stateManager{cmds: make(chan any)}
 }
 
 // run is the state manager's main loop and must be called in its own goroutine.
 // publish is called synchronously after each successful state change.
-func (m *stateManager) run(initial appState, publish func(sseEvent)) {
+func (m *stateManager) run(initial appState, broadcastChan chan<- sseEvent) {
 	state := initial
 	for cmd := range m.cmds {
 		switch c := cmd.(type) {
@@ -162,7 +162,7 @@ func (m *stateManager) run(initial appState, publish func(sseEvent)) {
 			// Send a full snapshot since (right now) all robots move
 			// If robot.updated events are sent, the channel buffer will overflow since ~25 events are dumped into it
 			syncRobots(&state)
-			publish(sseEvent{name: "state.snapshot", data: buildAppSnapshot(state)})
+			broadcastChan <- sseEvent{name: "state.snapshot", data: buildAppSnapshot(state)}
 			c.reply <- struct{}{}
 
 		case applyMoveCmd:
@@ -172,9 +172,9 @@ func (m *stateManager) run(initial appState, publish func(sseEvent)) {
 			}
 			state.Version++
 			state.UpdatedAt = time.Now()
-			publish(sseEvent{name: "game.updated", data: buildGameSnapshot(&state.Game)})
+			broadcastChan <- sseEvent{name: "game.updated", data: buildGameSnapshot(&state.Game)}
 			for _, robot := range syncRobots(&state) {
-				publish(sseEvent{name: "robot.updated", data: robot})
+				broadcastChan <- sseEvent{name: "robot.updated", data: robot}
 			}
 			c.reply <- nil
 

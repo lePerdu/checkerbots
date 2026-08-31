@@ -26,26 +26,26 @@ func encodeSSEEvent(event sseEvent) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-// hub manages SSE client subscriptions and event fan-out.
+// sseHub manages SSE client subscriptions and event fan-out.
 //
 // Events are pre-encoded once as SSE message bytes before distribution.
 // Clients that cannot keep up (full buffer) are silently dropped.
-type hub struct {
+type sseHub struct {
 	register   chan chan []byte
 	unregister chan chan []byte
-	broadcast  chan []byte
+	broadcast  chan sseEvent
 }
 
-func newHub() *hub {
-	return &hub{
+func newSseHub() sseHub {
+	return sseHub{
 		register:   make(chan chan []byte),
 		unregister: make(chan chan []byte),
-		broadcast:  make(chan []byte, 8),
+		broadcast:  make(chan sseEvent, 8),
 	}
 }
 
 // run is the hub's main loop and must be called in its own goroutine.
-func (h *hub) run() {
+func (h *sseHub) run() {
 	clients := map[chan []byte]struct{}{}
 	for {
 		select {
@@ -56,7 +56,13 @@ func (h *hub) run() {
 				delete(clients, ch)
 				close(ch)
 			}
-		case msg := <-h.broadcast:
+		case event := <-h.broadcast:
+			msg, err := encodeSSEEvent(event)
+			if err != nil {
+				log.Printf("hub: encode SSE event %q: %v", event.name, err)
+				continue
+			}
+
 			for ch := range clients {
 				select {
 				case ch <- msg:
@@ -72,7 +78,7 @@ func (h *hub) run() {
 
 // subscribe returns a buffered channel that will receive encoded SSE messages.
 // The caller must call unsubscribe when done.
-func (h *hub) subscribe() chan []byte {
+func (h *sseHub) subscribe() chan []byte {
 	ch := make(chan []byte, 16)
 	h.register <- ch
 	return ch
@@ -80,16 +86,6 @@ func (h *hub) subscribe() chan []byte {
 
 // unsubscribe removes and closes a previously subscribed channel.
 // Safe to call even if the hub already dropped the client.
-func (h *hub) unsubscribe(ch chan []byte) {
+func (h *sseHub) unsubscribe(ch chan []byte) {
 	h.unregister <- ch
-}
-
-// publish encodes event and broadcasts it to all subscribed clients.
-func (h *hub) publish(event sseEvent) {
-	msg, err := encodeSSEEvent(event)
-	if err != nil {
-		log.Printf("encode SSE event %q: %v", event.name, err)
-		return
-	}
-	h.broadcast <- msg
 }

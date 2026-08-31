@@ -139,11 +139,11 @@ func main() {
 	// No events are published here since no subscribers exist yet.
 	syncRobots(&initial)
 
-	h := newHub()
+	h := newSseHub()
 	go h.run()
 
 	mgr := newStateManager()
-	go mgr.run(initial, h.publish)
+	go mgr.run(initial, h.broadcast)
 
 	mux := http.NewServeMux()
 	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticFS))))
