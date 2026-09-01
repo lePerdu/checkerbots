@@ -36,7 +36,7 @@ func NewGame(config GameConfig) Game {
 	for row := 0; row < config.InitialRows; row++ {
 		for col := row % 2; col < config.BoardSize; col += 2 {
 			pieces = append(pieces, Piece{
-				ID:       pieceID(PlayerSideBlack, pieceIndex),
+				ID:       makePieceID(PlayerSideBlack, pieceIndex),
 				Side:     PlayerSideBlack,
 				Kind:     PieceKindMan,
 				Position: Position{Row: row, Col: col},
@@ -49,7 +49,7 @@ func NewGame(config GameConfig) Game {
 	for row := config.BoardSize - 1; row >= config.BoardSize-config.InitialRows; row-- {
 		for col := row % 2; col < 8; col += 2 {
 			pieces = append(pieces, Piece{
-				ID:       pieceID(PlayerSideRed, pieceIndex),
+				ID:       makePieceID(PlayerSideRed, pieceIndex),
 				Side:     PlayerSideRed,
 				Kind:     PieceKindMan,
 				Position: Position{Row: row, Col: col},
@@ -75,8 +75,8 @@ func NewGame8x8() Game {
 	})
 }
 
-func pieceID(side PlayerSide, index int) string {
-	return string(side) + "-" + strconv.Itoa(index+1)
+func makePieceID(side PlayerSide, index int) PieceID {
+	return PieceID(string(side) + "-" + strconv.Itoa(index+1))
 }
 
 // computeLegalMoves returns the legal moves for the current player.

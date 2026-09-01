@@ -38,10 +38,10 @@ type AppSnapshot struct {
 
 // RobotSnapshot is the serializable form of a single robot's state.
 type RobotSnapshot struct {
-	ID        string    `json:"id"`
-	PieceID   string    `json:"piece_id"`
-	Pose      Pose      `json:"pose"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID        RobotID            `json:"id"`
+	PieceID   gameengine.PieceID `json:"piece_id"`
+	Pose      Pose               `json:"pose"`
+	UpdatedAt time.Time          `json:"updated_at"`
 }
 
 // GameSnapshot carries the board and game state delivered to the frontend.
@@ -54,12 +54,12 @@ type RobotSnapshot struct {
 // (on-board or captured) all share the same Row/Col position fields, with
 // their extended-grid position already resolved server-side.
 type GameSnapshot struct {
-	Turn              string                        `json:"turn"`
-	GameOver          *gameOverResponse             `json:"gameOver"`
-	BoardSize         int                           `json:"boardSize"`
-	CaptureColumns    int                           `json:"captureColumns"`
-	Pieces            []gamePiece                   `json:"pieces"`
-	LegalMovesByPiece map[string][]legalMoveSummary `json:"legalMovesByPiece"`
+	Turn              string                                    `json:"turn"`
+	GameOver          *gameOverResponse                         `json:"gameOver"`
+	BoardSize         int                                       `json:"boardSize"`
+	CaptureColumns    int                                       `json:"captureColumns"`
+	Pieces            []gamePiece                               `json:"pieces"`
+	LegalMovesByPiece map[gameengine.PieceID][]legalMoveSummary `json:"legalMovesByPiece"`
 }
 
 type gameOverResponse struct {
@@ -87,12 +87,12 @@ type applyMoveRequest struct {
 // currently on the board or set aside as captured - both share the same
 // Row/Col position fields, using the extended grid described on GameSnapshot.
 type gamePiece struct {
-	ID      string `json:"id"`
-	Side    string `json:"side"`
-	Kind    string `json:"kind"`
-	Classes string `json:"classes"`
-	Row     int    `json:"row"`
-	Col     int    `json:"col"`
+	ID      gameengine.PieceID `json:"id"`
+	Side    string             `json:"side"`
+	Kind    string             `json:"kind"`
+	Classes string             `json:"classes"`
+	Row     int                `json:"row"`
+	Col     int                `json:"col"`
 }
 
 type errorResponse struct {
@@ -130,7 +130,7 @@ func main() {
 		log.Printf("failed to load state: %v; using default state", err)
 		initial = appState{
 			Game:      gameengine.NewGame8x8(),
-			Robots:    map[string]RobotInfo{},
+			Robots:    map[RobotID]RobotInfo{},
 			UpdatedAt: time.Now(),
 		}
 	}
@@ -328,7 +328,7 @@ func buildGameSnapshot(game *gameengine.Game) GameSnapshot {
 		})
 	}
 
-	legalMovesByPiece := make(map[string][]legalMoveSummary)
+	legalMovesByPiece := make(map[gameengine.PieceID][]legalMoveSummary)
 	for _, move := range game.LegalMoves {
 		if len(move) < 2 {
 			continue

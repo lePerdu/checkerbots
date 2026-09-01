@@ -59,7 +59,7 @@ func TestNewGameReturnsStandardStartingBoard(t *testing.T) {
 		{Row: 7, Col: 7}: true,
 	}
 
-	seenIDs := map[string]bool{}
+	seenIDs := map[PieceID]bool{}
 	blackCount := 0
 	redCount := 0
 
@@ -514,7 +514,7 @@ func TestApplyMoveAppliesMultiStepJumpSequence(t *testing.T) {
 
 	// Captured pieces fill the outer capture column from the bottom row up,
 	// in capture order - see capturedPiecePosition.
-	wantCapturedPositions := map[string]Position{
+	wantCapturedPositions := map[PieceID]Position{
 		"red-1": {Row: 0, Col: 9},
 		"red-2": {Row: 1, Col: 9},
 	}
@@ -595,7 +595,7 @@ func TestCapturedPiecesAreTrackedIndependentlyPerSideAcrossMoves(t *testing.T) {
 
 	// Each side's first capture lands in its own outer column, at the row
 	// closest to the board on that side - see capturedPiecePosition.
-	wantPositions := map[string]Position{
+	wantPositions := map[PieceID]Position{
 		"red-1":   {Row: 0, Col: 9},
 		"black-2": {Row: 7, Col: -2},
 	}
@@ -640,7 +640,7 @@ func TestGameFromStoredPreservesCapturedPiecePositionsAcrossReload(t *testing.T)
 		t.Fatalf("expected red capture to be applied after reload, got error: %v", err)
 	}
 
-	wantPositions := map[string]Position{
+	wantPositions := map[PieceID]Position{
 		"red-1":   {Row: 0, Col: 9},
 		"black-2": {Row: 7, Col: -2},
 	}

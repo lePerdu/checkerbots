@@ -23,9 +23,11 @@ type Position struct {
 	Col int
 }
 
+type PieceID string
+
 // Piece represents one logical checkers piece.
 type Piece struct {
-	ID       string
+	ID       PieceID
 	Side     PlayerSide
 	Kind     PieceKind
 	Position Position
