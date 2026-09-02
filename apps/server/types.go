@@ -28,10 +28,6 @@ const (
 // measured robot poses and for command/calibration targets. When present,
 // Confidence should be in the range [0.0, 1.0].
 type Pose struct {
-	XMM        float64         `json:"x_mm"`
-	YMM        float64         `json:"y_mm"`
-	ThetaRad   float64         `json:"theta_rad"`
-	Frame      CoordinateFrame `json:"frame,omitempty"`
-	Source     PoseSource      `json:"source,omitempty"`
-	Confidence *float64        `json:"confidence,omitempty"`
+	XMM float64 `json:"x_mm"`
+	YMM float64 `json:"y_mm"`
 }

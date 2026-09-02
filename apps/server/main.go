@@ -128,16 +128,8 @@ func main() {
 	initial, err := loadState(statePath)
 	if err != nil {
 		log.Printf("failed to load state: %v; using default state", err)
-		initial = appState{
-			Game:      gameengine.NewGame8x8(),
-			Robots:    map[RobotID]robotInfo{},
-			UpdatedAt: time.Now(),
-		}
+		initial = makeInitialStoredState()
 	}
-
-	// Ensure robots are in sync with pieces from the loaded/default state.
-	// No events are published here since no subscribers exist yet.
-	syncRobotGoals(&initial)
 
 	h := newSseHub()
 	go h.run()
@@ -288,7 +280,7 @@ func main() {
 	}
 }
 
-func buildAppSnapshot(state appState) AppSnapshot {
+func buildAppSnapshot(state *appState) AppSnapshot {
 	robots := make([]RobotSnapshot, 0, len(state.Robots))
 	for id := range state.Robots {
 		robots = append(robots, buildRobotSnapshot(state, id))
@@ -303,7 +295,7 @@ func buildAppSnapshot(state appState) AppSnapshot {
 	}
 }
 
-func buildRobotSnapshot(state appState, id RobotID) RobotSnapshot {
+func buildRobotSnapshot(state *appState, id RobotID) RobotSnapshot {
 	assignedPiece, _ := state.Assignments.GetPieceIDByRobotID(id)
 	return RobotSnapshot{
 		ID:        id,

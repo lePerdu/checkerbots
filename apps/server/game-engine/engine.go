@@ -7,18 +7,6 @@ import (
 // TODO: Use 2d array? Track this in `Game` for easy lookups later?
 type boardCache map[Position]*Piece
 
-func GameToStored(game Game) StoredGame {
-	return game.StoredGame
-}
-
-func GameFromStored(stored StoredGame) Game {
-	game := Game{
-		StoredGame: stored,
-	}
-	computeLegalMoves(&game)
-	return game
-}
-
 func NewGame(config GameConfig) Game {
 	if config.BoardSize <= 0 {
 		panic("BoardSize must be positive")
@@ -73,6 +61,18 @@ func NewGame8x8() Game {
 		InitialRows:    3,
 		CaptureColumns: 2,
 	})
+}
+
+func GameFromStored(stored StoredGame) Game {
+	game := Game{
+		StoredGame: stored,
+	}
+	computeLegalMoves(&game)
+	return game
+}
+
+func (game *Game) ToStored() StoredGame {
+	return game.StoredGame
 }
 
 func makePieceID(side PlayerSide, index int) PieceID {
