@@ -360,6 +360,14 @@ function robotCSSPercent(robot) {
   return { leftPct, topPct, sizePct };
 }
 
+// Returns the `side` ('red' or 'black') of the checker piece a robot is
+// currently assigned to, or null if it isn't assigned to one.
+function robotPieceSide(robot) {
+  const pieces = currentBoardState && Array.isArray(currentBoardState.pieces) ? currentBoardState.pieces : [];
+  const piece = pieces.find((piece) => piece.id === robot.piece_id);
+  return piece ? piece.side : null;
+}
+
 // Creates or repositions the DOM element for a single robot.
 function syncRobotElement(robot) {
   if (!robotBoardElement) return;
@@ -368,10 +376,11 @@ function syncRobotElement(robot) {
   if (!el) {
     el = document.createElement('div');
     el.id = elemId;
-    el.className = 'robot';
     el.textContent = 'R';
     robotBoardElement.appendChild(el);
   }
+  const side = robotPieceSide(robot);
+  el.className = side ? `robot robot--${side}` : 'robot';
   const { leftPct, topPct, sizePct } = robotCSSPercent(robot);
   el.style.left = `${leftPct}%`;
   el.style.top = `${topPct}%`;
