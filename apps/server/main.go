@@ -130,7 +130,7 @@ func main() {
 		log.Printf("failed to load state: %v; using default state", err)
 		initial = appState{
 			Game:      gameengine.NewGame8x8(),
-			Robots:    map[RobotID]RobotInfo{},
+			Robots:    map[RobotID]robotInfo{},
 			UpdatedAt: time.Now(),
 		}
 	}
@@ -291,9 +291,10 @@ func main() {
 func buildAppSnapshot(state appState) AppSnapshot {
 	robots := make([]RobotSnapshot, 0, len(state.Robots))
 	for _, r := range state.Robots {
+		assignedPiece, _ := state.Assignments.GetPieceIDByRobotID(r.ID)
 		robots = append(robots, RobotSnapshot{
 			ID:        r.ID,
-			PieceID:   r.PieceID,
+			PieceID:   assignedPiece,
 			Pose:      r.Pose,
 			UpdatedAt: r.UpdatedAt,
 		})

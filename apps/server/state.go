@@ -4,6 +4,7 @@ import (
 	"encoding/gob"
 	"log"
 	"os"
+	"strconv"
 	"time"
 
 	gameengine "checkerbots/apps/server/game-engine"
@@ -11,10 +12,11 @@ import (
 
 // appState is the authoritative server state, owned exclusively by the state manager goroutine.
 type appState struct {
-	Version   int64
-	Game      gameengine.Game
-	Robots    map[RobotID]RobotInfo
-	UpdatedAt time.Time
+	Version     int64
+	Game        gameengine.Game
+	Robots      map[RobotID]robotInfo
+	Assignments pieceAssignmentState
+	UpdatedAt   time.Time
 }
 
 type RobotID string
@@ -46,19 +48,18 @@ func (s *pieceAssignmentState) GetPieceIDByRobotID(robotID RobotID) (pieceID gam
 	return
 }
 
-// RobotInfo holds the live state of a physical robot reported by external systems.
-type RobotInfo struct {
-	ID        RobotID            `json:"id"`
-	Pose      Pose               `json:"pose"`
-	PieceID   gameengine.PieceID `json:"piece_id"`
-	UpdatedAt time.Time          `json:"updated_at"`
+// robotInfo holds the live state of a physical robot reported by external systems.
+type robotInfo struct {
+	ID        RobotID   `json:"id"`
+	Pose      Pose      `json:"pose"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // storedAppState is the disk-serializable form of appState.
 type storedAppState struct {
 	Version   int64
 	Game      gameengine.StoredGame
-	Robots    map[RobotID]RobotInfo
+	Robots    map[RobotID]robotInfo
 	UpdatedAt time.Time
 }
 
@@ -115,12 +116,15 @@ func positionToMM(pos gameengine.Position, boardSize int) (xMM, yMM float64) {
 // syncRobots ensures state.Robots matches the current piece positions.
 // It returns all RobotInfo values that were created or updated so the caller
 // can publish robot.updated events.
-func syncRobots(state *appState) []RobotInfo {
+func syncRobots(state *appState) []robotInfo {
 	now := time.Now()
-	var changed []RobotInfo
+	var changed []robotInfo
 
 	for _, piece := range state.Game.Pieces {
-		robotID := RobotID(piece.ID)
+		robotID, assigned := state.Assignments.GetRobotIDByPieceID(piece.ID)
+		if !assigned {
+			continue
+		}
 		xMM, yMM := positionToMM(piece.Position, state.Game.BoardSize)
 		pose := Pose{
 			XMM:    xMM,
@@ -129,25 +133,12 @@ func syncRobots(state *appState) []RobotInfo {
 			Source: PoseSourceSimulator,
 		}
 
-		existing, exists := state.Robots[robotID]
-		if !exists {
-			// Create a new robot for this piece.
-			robot := RobotInfo{
-				ID:        robotID,
-				PieceID:   piece.ID,
-				Pose:      pose,
-				UpdatedAt: now,
-			}
+		robot := state.Robots[robotID]
+		if robot.Pose.XMM != pose.XMM || robot.Pose.YMM != pose.YMM {
+			robot.Pose = pose
+			robot.UpdatedAt = now
 			state.Robots[robotID] = robot
 			changed = append(changed, robot)
-			continue
-		}
-
-		if existing.Pose.XMM != pose.XMM || existing.Pose.YMM != pose.YMM {
-			existing.Pose = pose
-			existing.UpdatedAt = now
-			state.Robots[RobotID(piece.ID)] = existing
-			changed = append(changed, existing)
 		}
 	}
 
@@ -194,7 +185,22 @@ func (m *stateManager) run(initial appState, broadcastChan chan<- sseEvent) {
 		switch c := cmd.(type) {
 		case newGameCmd:
 			state.Game = gameengine.NewGame8x8()
-			state.Robots = map[RobotID]RobotInfo{}
+			state.Robots = map[RobotID]robotInfo{}
+			state.Assignments = pieceAssignmentState{
+				robotIDByPieceID: make(map[gameengine.PieceID]RobotID),
+				pieceIDByRobotID: make(map[RobotID]gameengine.PieceID),
+			}
+			for i, piece := range state.Game.Pieces {
+				robotID := RobotID("r" + strconv.Itoa(i))
+				state.Robots[robotID] = robotInfo{
+					ID: robotID,
+					// TODO: Figure out initial positions
+					Pose:      Pose{},
+					UpdatedAt: time.Now(),
+				}
+				state.Assignments.Assign(robotID, piece.ID)
+			}
+
 			state.Version++
 			state.UpdatedAt = time.Now()
 			// Send a full snapshot since (right now) all robots move
