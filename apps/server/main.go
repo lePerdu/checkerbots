@@ -137,7 +137,7 @@ func main() {
 
 	// Ensure robots are in sync with pieces from the loaded/default state.
 	// No events are published here since no subscribers exist yet.
-	syncRobots(&initial)
+	syncRobotGoals(&initial)
 
 	h := newSseHub()
 	go h.run()
@@ -290,14 +290,8 @@ func main() {
 
 func buildAppSnapshot(state appState) AppSnapshot {
 	robots := make([]RobotSnapshot, 0, len(state.Robots))
-	for _, r := range state.Robots {
-		assignedPiece, _ := state.Assignments.GetPieceIDByRobotID(r.ID)
-		robots = append(robots, RobotSnapshot{
-			ID:        r.ID,
-			PieceID:   assignedPiece,
-			Pose:      r.Pose,
-			UpdatedAt: r.UpdatedAt,
-		})
+	for id := range state.Robots {
+		robots = append(robots, buildRobotSnapshot(state, id))
 	}
 	return AppSnapshot{
 		Version:         state.Version,
@@ -306,6 +300,16 @@ func buildAppSnapshot(state appState) AppSnapshot {
 		CellSizeMM:      boardCellSizeMM,
 		RobotDiameterMM: 340,
 		UpdatedAt:       state.UpdatedAt,
+	}
+}
+
+func buildRobotSnapshot(state appState, id RobotID) RobotSnapshot {
+	assignedPiece, _ := state.Assignments.GetPieceIDByRobotID(id)
+	return RobotSnapshot{
+		ID:        id,
+		PieceID:   assignedPiece,
+		Pose:      state.Robots[id].Pose,
+		UpdatedAt: state.Robots[id].UpdatedAt,
 	}
 }
 

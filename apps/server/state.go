@@ -16,10 +16,17 @@ type appState struct {
 	Game        gameengine.Game
 	Robots      map[RobotID]robotInfo
 	Assignments pieceAssignmentState
+	Planner     plannerState
 	UpdatedAt   time.Time
 }
 
 type RobotID string
+
+// robotInfo holds the live state of a physical robot reported by external systems.
+type robotInfo struct {
+	Pose      Pose
+	UpdatedAt time.Time
+}
 
 type pieceAssignmentState struct {
 	robotIDByPieceID map[gameengine.PieceID]RobotID
@@ -48,19 +55,25 @@ func (s *pieceAssignmentState) GetPieceIDByRobotID(robotID RobotID) (pieceID gam
 	return
 }
 
-// robotInfo holds the live state of a physical robot reported by external systems.
-type robotInfo struct {
-	ID        RobotID   `json:"id"`
-	Pose      Pose      `json:"pose"`
-	UpdatedAt time.Time `json:"updated_at"`
+type plannerState struct {
+	Goals map[RobotID]robotGoal
+}
+
+type robotGoal struct {
+	BoardPos   gameengine.Position
+	IsKing     bool
+	IsCaptured bool
+	// TOOD: Track updated time?
 }
 
 // storedAppState is the disk-serializable form of appState.
 type storedAppState struct {
-	Version   int64
-	Game      gameengine.StoredGame
-	Robots    map[RobotID]robotInfo
-	UpdatedAt time.Time
+	Version     int64
+	Game        gameengine.StoredGame
+	Robots      map[RobotID]robotInfo
+	Assignments pieceAssignmentState
+	Planner     plannerState
+	UpdatedAt   time.Time
 }
 
 func saveState(filePath string, state appState) error {
@@ -74,10 +87,12 @@ func saveState(filePath string, state appState) error {
 	}
 	defer file.Close()
 	return gob.NewEncoder(file).Encode(storedAppState{
-		Version:   state.Version,
-		Game:      gameengine.GameToStored(state.Game),
-		Robots:    state.Robots,
-		UpdatedAt: state.UpdatedAt,
+		Version:     state.Version,
+		Game:        gameengine.GameToStored(state.Game),
+		Robots:      state.Robots,
+		Assignments: state.Assignments,
+		Planner:     state.Planner,
+		UpdatedAt:   state.UpdatedAt,
 	})
 }
 
@@ -93,10 +108,12 @@ func loadState(filePath string) (appState, error) {
 		return appState{}, err
 	}
 	return appState{
-		Version:   stored.Version,
-		Game:      gameengine.GameFromStored(stored.Game),
-		Robots:    stored.Robots,
-		UpdatedAt: stored.UpdatedAt,
+		Version:     stored.Version,
+		Game:        gameengine.GameFromStored(stored.Game),
+		Robots:      stored.Robots,
+		Assignments: stored.Assignments,
+		Planner:     stored.Planner,
+		UpdatedAt:   stored.UpdatedAt,
 	}, nil
 }
 
@@ -113,32 +130,32 @@ func positionToMM(pos gameengine.Position, boardSize int) (xMM, yMM float64) {
 	return
 }
 
-// syncRobots ensures state.Robots matches the current piece positions.
-// It returns all RobotInfo values that were created or updated so the caller
-// can publish robot.updated events.
-func syncRobots(state *appState) []robotInfo {
-	now := time.Now()
-	var changed []robotInfo
+// syncRobotGoals ensures state.Planner matches the current piece positions.
+// It returns all RobotIDs whose goals were created or updated.
+func syncRobotGoals(state *appState) []RobotID {
+	var changed []RobotID
 
 	for _, piece := range state.Game.Pieces {
 		robotID, assigned := state.Assignments.GetRobotIDByPieceID(piece.ID)
 		if !assigned {
 			continue
 		}
-		xMM, yMM := positionToMM(piece.Position, state.Game.BoardSize)
-		pose := Pose{
-			XMM:    xMM,
-			YMM:    yMM,
-			Frame:  CoordinateFrameBoard,
-			Source: PoseSourceSimulator,
+
+		newGoal := robotGoal{
+			BoardPos:   piece.Position,
+			IsKing:     piece.Kind == gameengine.PieceKindKing,
+			IsCaptured: piece.Captured,
 		}
 
-		robot := state.Robots[robotID]
-		if robot.Pose.XMM != pose.XMM || robot.Pose.YMM != pose.YMM {
-			robot.Pose = pose
-			robot.UpdatedAt = now
-			state.Robots[robotID] = robot
-			changed = append(changed, robot)
+		// TODO: Ensure that every robot always has a goal?
+		if currentGoal, exists := state.Planner.Goals[robotID]; !exists || currentGoal != newGoal {
+			state.Planner.Goals[robotID] = newGoal
+			xMM, yMM := positionToMM(piece.Position, state.Game.BoardSize)
+			state.Robots[robotID] = robotInfo{
+				Pose:      Pose{XMM: xMM, YMM: yMM},
+				UpdatedAt: time.Now(),
+			}
+			changed = append(changed, robotID)
 		}
 	}
 
@@ -193,19 +210,21 @@ func (m *stateManager) run(initial appState, broadcastChan chan<- sseEvent) {
 			for i, piece := range state.Game.Pieces {
 				robotID := RobotID("r" + strconv.Itoa(i))
 				state.Robots[robotID] = robotInfo{
-					ID: robotID,
 					// TODO: Figure out initial positions
 					Pose:      Pose{},
 					UpdatedAt: time.Now(),
 				}
 				state.Assignments.Assign(robotID, piece.ID)
 			}
+			state.Planner = plannerState{
+				Goals: make(map[RobotID]robotGoal),
+			}
 
 			state.Version++
 			state.UpdatedAt = time.Now()
 			// Send a full snapshot since (right now) all robots move
 			// If robot.updated events are sent, the channel buffer will overflow since ~25 events are dumped into it
-			syncRobots(&state)
+			syncRobotGoals(&state)
 			broadcastChan <- sseEvent{name: "state.snapshot", data: buildAppSnapshot(state)}
 			c.reply <- struct{}{}
 
@@ -217,8 +236,8 @@ func (m *stateManager) run(initial appState, broadcastChan chan<- sseEvent) {
 			state.Version++
 			state.UpdatedAt = time.Now()
 			broadcastChan <- sseEvent{name: "game.updated", data: buildGameSnapshot(&state.Game)}
-			for _, robot := range syncRobots(&state) {
-				broadcastChan <- sseEvent{name: "robot.updated", data: robot}
+			for _, robotID := range syncRobotGoals(&state) {
+				broadcastChan <- sseEvent{name: "robot.updated", data: buildRobotSnapshot(state, robotID)}
 			}
 			c.reply <- nil
 
