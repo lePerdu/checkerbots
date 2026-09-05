@@ -10,6 +10,7 @@ import (
 	"time"
 
 	gameengine "checkerbots/apps/server/game-engine"
+	"checkerbots/apps/server/vec"
 )
 
 // appState is the authoritative server state, owned exclusively by the state manager goroutine.
@@ -39,28 +40,6 @@ const ROBOT_TICK_INTERVAL = 200 * time.Millisecond
 const ROBOT_SPEED_MMPS = 300.0
 const ROBOT_ARRIVED_THRESHOLD_MM = 10.0
 
-type Vec2 struct{ X, Y float64 }
-
-func (v Vec2) Length2() float64 {
-	return v.X*v.X + v.Y*v.Y
-}
-
-func (v Vec2) Length() float64 {
-	return float64(math.Sqrt(float64(v.Length2())))
-}
-
-func (v Vec2) Normalize0() Vec2 {
-	length := v.Length()
-	if length == 0 {
-		return v
-	}
-	return Vec2{X: v.X / length, Y: v.Y / length}
-}
-
-func (v Vec2) Scale(s float64) Vec2 {
-	return Vec2{X: v.X * s, Y: v.Y * s}
-}
-
 type robotUpdatedEvent struct {
 	RobotID RobotID
 	Pose    Pose
@@ -72,6 +51,7 @@ func (c *robotController) run(initialPose Pose, updateChan chan<- robotUpdatedEv
 
 	curPose := initialPose
 	targetPose := initialPose
+	lastTick := time.Now()
 
 	ticker := time.NewTicker(ROBOT_TICK_INTERVAL)
 	ticker.Stop()
@@ -79,23 +59,28 @@ func (c *robotController) run(initialPose Pose, updateChan chan<- robotUpdatedEv
 
 	for {
 		select {
-		case <-ticker.C:
+		case thisTick := <-ticker.C:
+			elapsed := thisTick.Sub(lastTick)
+			lastTick = thisTick
+
 			log.Printf("controller: robot %s: tick", c.robotID)
-			const ROBOT_STEP_MM = ROBOT_SPEED_MMPS * float64(ROBOT_TICK_INTERVAL) / float64(time.Second)
-			const ROBOT_STEP_MM_2 = (ROBOT_STEP_MM * ROBOT_STEP_MM)
 			const ROBOT_ARRIVED_THRESHOLD_MM_2 = ROBOT_ARRIVED_THRESHOLD_MM * ROBOT_ARRIVED_THRESHOLD_MM
 
-			targetDelta := Vec2{X: targetPose.XMM - curPose.XMM, Y: targetPose.YMM - curPose.YMM}
-			dist2 := targetDelta.Length2()
-			if dist2 < ROBOT_ARRIVED_THRESHOLD_MM_2 {
+			targetDelta := vec.V2{X: targetPose.XMM - curPose.XMM, Y: targetPose.YMM - curPose.YMM}
+			totalDist2 := targetDelta.Length2()
+			if totalDist2 < ROBOT_ARRIVED_THRESHOLD_MM_2 {
 				ticker.Stop()
 				continue
 			}
-			stepDist := ROBOT_STEP_MM
-			if dist2 < ROBOT_STEP_MM_2 {
-				stepDist = math.Sqrt(stepDist)
+			maxStepDist := ROBOT_SPEED_MMPS * elapsed.Seconds()
+
+			var stepDelta vec.V2
+			if totalDist2 <= maxStepDist*maxStepDist {
+				stepDelta = targetDelta
+			} else {
+				stepDelta = targetDelta.Scale(maxStepDist / math.Sqrt(totalDist2))
 			}
-			stepDelta := targetDelta.Scale(stepDist / math.Sqrt(float64(dist2)))
+
 			curPose.XMM += stepDelta.X
 			curPose.YMM += stepDelta.Y
 			log.Printf("controller: robot %s: +%v: send update: %v", c.robotID, stepDelta, robotUpdatedEvent{RobotID: c.robotID, Pose: curPose})
@@ -108,6 +93,7 @@ func (c *robotController) run(initialPose Pose, updateChan chan<- robotUpdatedEv
 			curPose = cmd.CurrentPose
 			targetPose = cmd.TargetPose
 			ticker.Reset(ROBOT_TICK_INTERVAL)
+			lastTick = time.Now()
 		}
 	}
 }
