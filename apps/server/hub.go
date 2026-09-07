@@ -79,7 +79,7 @@ func (h *sseHub) run() {
 // subscribe returns a buffered channel that will receive encoded SSE messages.
 // The caller must call unsubscribe when done.
 func (h *sseHub) subscribe() chan []byte {
-	ch := make(chan []byte, 16)
+	ch := make(chan []byte, 32)
 	h.register <- ch
 	return ch
 }

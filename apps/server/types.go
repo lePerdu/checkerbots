@@ -1,5 +1,7 @@
 package main
 
+import fleetapi "checkerbots/apps/server/fleetapi"
+
 // CoordinateFrame names the frame a pose is expressed in.
 type CoordinateFrame string
 
@@ -21,6 +23,8 @@ const (
 	PoseSourceSimulator PoseSource = "simulator"
 	PoseSourceUnknown   PoseSource = "unknown"
 )
+
+type RobotID = fleetapi.RobotID
 
 // Pose is a board-relative or world-relative pose expressed in millimeters and radians.
 //

@@ -1,104 +1,41 @@
 package main
 
 import (
+	"context"
 	"encoding/gob"
 	"log"
-	"math"
 	"os"
-	"strconv"
-	"sync"
 	"time"
 
+	"checkerbots/apps/server/fleetapi"
 	gameengine "checkerbots/apps/server/game-engine"
-	"checkerbots/apps/server/vec"
+	"checkerbots/apps/server/simulator"
 )
 
 // appState is the authoritative server state, owned exclusively by the state manager goroutine.
 type appState struct {
-	Version         int64
-	Game            gameengine.Game
+	Version int64
+	Game    gameengine.Game
+	// Cache of robot state, separate from FleetController to avoid synchronization issues.
 	Robots          map[RobotID]robotInfo
 	Assignments     pieceAssignmentState
 	Planner         plannerState
-	controllers     map[RobotID]robotController
-	robotUpdateChan chan robotUpdatedEvent
-	controllerWg    sync.WaitGroup
+	FleetController fleetapi.FleetController
+	fleetCmdChan    chan fleetapi.RobotCommand
+	robotUpdateChan chan fleetapi.RobotUpdate
 	UpdatedAt       time.Time
 }
 
-type robotController struct {
-	robotID RobotID
-	cmds    chan robotCmd
+// storedAppState is the disk-serializable form of appState.
+type storedAppState struct {
+	Version     int64
+	Game        gameengine.StoredGame
+	Robots      map[RobotID]robotInfo
+	Assignments pieceAssignmentState
+	Planner     plannerState
+	Simulator   simulator.SimState
+	UpdatedAt   time.Time
 }
-
-type robotCmd struct {
-	CurrentPose Pose
-	TargetPose  Pose
-}
-
-const ROBOT_TICK_INTERVAL = 200 * time.Millisecond
-const ROBOT_SPEED_MMPS = 300.0
-const ROBOT_ARRIVED_THRESHOLD_MM = 10.0
-
-type robotUpdatedEvent struct {
-	RobotID RobotID
-	Pose    Pose
-}
-
-func (c *robotController) run(initialPose Pose, updateChan chan<- robotUpdatedEvent) {
-	log.Printf("controller: robot %s: starting with initial position: %v", c.robotID, initialPose)
-	defer log.Printf("controller: robot %s: stopping", c.robotID)
-
-	curPose := initialPose
-	targetPose := initialPose
-	lastTick := time.Now()
-
-	ticker := time.NewTicker(ROBOT_TICK_INTERVAL)
-	ticker.Stop()
-	defer ticker.Stop()
-
-	for {
-		select {
-		case thisTick := <-ticker.C:
-			elapsed := thisTick.Sub(lastTick)
-			lastTick = thisTick
-
-			log.Printf("controller: robot %s: tick", c.robotID)
-			const ROBOT_ARRIVED_THRESHOLD_MM_2 = ROBOT_ARRIVED_THRESHOLD_MM * ROBOT_ARRIVED_THRESHOLD_MM
-
-			targetDelta := vec.V2{X: targetPose.XMM - curPose.XMM, Y: targetPose.YMM - curPose.YMM}
-			totalDist2 := targetDelta.Length2()
-			if totalDist2 < ROBOT_ARRIVED_THRESHOLD_MM_2 {
-				ticker.Stop()
-				continue
-			}
-			maxStepDist := ROBOT_SPEED_MMPS * elapsed.Seconds()
-
-			var stepDelta vec.V2
-			if totalDist2 <= maxStepDist*maxStepDist {
-				stepDelta = targetDelta
-			} else {
-				stepDelta = targetDelta.Scale(maxStepDist / math.Sqrt(totalDist2))
-			}
-
-			curPose.XMM += stepDelta.X
-			curPose.YMM += stepDelta.Y
-			log.Printf("controller: robot %s: +%v: send update: %v", c.robotID, stepDelta, robotUpdatedEvent{RobotID: c.robotID, Pose: curPose})
-			updateChan <- robotUpdatedEvent{RobotID: c.robotID, Pose: curPose}
-		case cmd, ok := <-c.cmds:
-			if !ok {
-				return
-			}
-			log.Printf("controller: robot %s received command: %v", c.robotID, cmd)
-			curPose = cmd.CurrentPose
-			targetPose = cmd.TargetPose
-			ticker.Reset(ROBOT_TICK_INTERVAL)
-			lastTick = time.Now()
-		}
-	}
-}
-
-type RobotID string
 
 // robotInfo holds the live state of a physical robot reported by external systems.
 type robotInfo struct {
@@ -144,16 +81,6 @@ type robotGoal struct {
 	// TOOD: Track updated time?
 }
 
-// storedAppState is the disk-serializable form of appState.
-type storedAppState struct {
-	Version     int64
-	Game        gameengine.StoredGame
-	Robots      map[RobotID]robotInfo
-	Assignments pieceAssignmentState
-	Planner     plannerState
-	UpdatedAt   time.Time
-}
-
 func makeInitialStoredState() (stored storedAppState) {
 	game := gameengine.NewGame8x8()
 	stored = storedAppState{
@@ -166,69 +93,50 @@ func makeInitialStoredState() (stored storedAppState) {
 		Planner: plannerState{
 			Goals: make(map[RobotID]robotGoal),
 		},
+		Simulator: simulator.NewSimulator(),
 		UpdatedAt: time.Now(),
 	}
 
-	for i, piece := range stored.Game.Pieces {
-		robotID := RobotID("r" + strconv.Itoa(i))
-		stored.Robots[robotID] = robotInfo{
-			// TODO: Figure out initial positions
-			Pose:      Pose{},
-			UpdatedAt: time.Now(),
-		}
+	for _, piece := range stored.Game.Pieces {
+		robotID := stored.Simulator.AddRobot(fleetapi.Pose{})
 		stored.Assignments.Assign(robotID, piece.ID)
 	}
 	return
 }
 
 func (state *appState) ToStored() storedAppState {
+	simState, ok := state.FleetController.(*simulator.SimState)
+	if !ok {
+		log.Panic("fleet controller is not a simulator.SimState")
+	}
 	return storedAppState{
 		Version:     state.Version,
 		Game:        state.Game.ToStored(),
 		Robots:      state.Robots,
 		Assignments: state.Assignments,
 		Planner:     state.Planner,
+		Simulator:   *simState,
 		UpdatedAt:   state.UpdatedAt,
 	}
 }
 
 func StateFromStored(stored storedAppState) *appState {
 	state := appState{
-		Version:     stored.Version,
-		Game:        gameengine.GameFromStored(stored.Game),
-		Robots:      stored.Robots,
-		Assignments: stored.Assignments,
-		Planner:     stored.Planner,
-		UpdatedAt:   stored.UpdatedAt,
+		Version:         stored.Version,
+		Game:            gameengine.GameFromStored(stored.Game),
+		Robots:          stored.Robots,
+		Assignments:     stored.Assignments,
+		Planner:         stored.Planner,
+		UpdatedAt:       stored.UpdatedAt,
+		fleetCmdChan:    make(chan fleetapi.RobotCommand),
+		robotUpdateChan: make(chan fleetapi.RobotUpdate),
+		FleetController: &stored.Simulator,
 	}
-	state.robotUpdateChan = make(chan robotUpdatedEvent, len(state.Robots))
-	state.CreateControllers()
+
+	go state.FleetController.Run(
+		context.Background(), state.fleetCmdChan, state.robotUpdateChan,
+	)
 	return &state
-}
-
-func (state *appState) ClearControllers() {
-	for _, c := range state.controllers {
-		close(c.cmds)
-	}
-	state.controllerWg.Wait()
-	clear(state.controllers)
-}
-
-func (state *appState) CreateControllers() {
-	if state.controllers == nil {
-		state.controllers = make(map[RobotID]robotController, len(state.Robots))
-	}
-	state.controllerWg = sync.WaitGroup{}
-	for robotID, robot := range state.Robots {
-		c := robotController{
-			robotID: robotID,
-			cmds:    make(chan robotCmd),
-		}
-		state.controllers[robotID] = c
-		state.controllerWg.Go(func() {
-			c.run(robot.Pose, state.robotUpdateChan)
-		})
-	}
 }
 
 func saveState(filePath string, stored storedAppState) error {
@@ -287,14 +195,10 @@ func syncRobotGoals(state *appState) {
 		if currentGoal, exists := state.Planner.Goals[robotID]; !exists || currentGoal != newGoal {
 			state.Planner.Goals[robotID] = newGoal
 			xMM, yMM := positionToMM(piece.Position, state.Game.BoardSize)
-			state.controllers[robotID].cmds <- robotCmd{
-				CurrentPose: state.Robots[robotID].Pose,
-				TargetPose:  Pose{XMM: xMM, YMM: yMM},
+			state.fleetCmdChan <- fleetapi.RobotCommand{
+				RobotID:    robotID,
+				TargetPose: fleetapi.Pose{XMM: xMM, YMM: yMM},
 			}
-			log.Printf("send event -> %s: %v", robotID, robotCmd{
-				CurrentPose: state.Robots[robotID].Pose,
-				TargetPose:  Pose{XMM: xMM, YMM: yMM},
-			})
 		}
 	}
 }
@@ -346,30 +250,15 @@ func (m *stateManager) run(initial storedAppState, broadcastChan chan<- sseEvent
 			switch c := cmd.(type) {
 			case newGameCmd:
 				state.Game = gameengine.NewGame8x8()
-				// TODO: Retain same robot objects & controllers across games. Just re-assign and send new commands to move them.
-				state.ClearControllers()
-				clear(state.Robots)
-				clear(state.Assignments.RobotIDByPieceID)
-				clear(state.Assignments.PieceIDByRobotID)
-				clear(state.Planner.Goals)
-
-				for i, piece := range state.Game.Pieces {
-					robotID := RobotID("r" + strconv.Itoa(i))
-					state.Robots[robotID] = robotInfo{
-						// TODO: Figure out initial positions
-						Pose:      Pose{},
-						UpdatedAt: time.Now(),
-					}
-					state.Assignments.Assign(robotID, piece.ID)
+				// TODO: Handle when game piece count changes
+				if len(state.Game.Pieces) != len(state.Robots) {
+					log.Panic("piece/robot count mismatch")
 				}
-				state.CreateControllers()
 
 				state.Version++
 				state.UpdatedAt = time.Now()
-				// Send a full snapshot since (right now) all robots move
-				// If robot.updated events are sent, the channel buffer will overflow since ~25 events are dumped into it
 				syncRobotGoals(state)
-				broadcastChan <- sseEvent{name: "state.snapshot", data: buildAppSnapshot(state)}
+				broadcastChan <- sseEvent{name: "game.updated", data: buildGameSnapshot(&state.Game)}
 				c.reply <- struct{}{}
 
 			case applyMoveCmd:
@@ -391,7 +280,10 @@ func (m *stateManager) run(initial storedAppState, broadcastChan chan<- sseEvent
 			}
 		case update := <-state.robotUpdateChan:
 			state.Robots[update.RobotID] = robotInfo{
-				Pose:      update.Pose,
+				Pose: Pose{
+					XMM: update.CurrentPose.XMM,
+					YMM: update.CurrentPose.YMM,
+				},
 				UpdatedAt: time.Now(), // TODO: Include in update event?
 			}
 			broadcastChan <- sseEvent{name: "robot.updated", data: buildRobotSnapshot(state, update.RobotID)}
