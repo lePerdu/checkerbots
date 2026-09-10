@@ -634,7 +634,7 @@ func TestGameFromStoredPreservesCapturedPiecePositionsAcrossReload(t *testing.T)
 		t.Fatalf("expected black capture to be applied, got error: %v", err)
 	}
 
-	reloaded := GameFromStored(GameToStored(game))
+	reloaded := GameFromStored(game.ToStored())
 
 	if err := ApplyMove(&reloaded, Move{{Row: 5, Col: 5}, {Row: 3, Col: 3}}); err != nil {
 		t.Fatalf("expected red capture to be applied after reload, got error: %v", err)
