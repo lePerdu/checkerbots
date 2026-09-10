@@ -180,6 +180,45 @@ func (s *SimState) step(dt time.Duration) {
 	for entityID := range s.Entities {
 		s.stepEntity(&s.Entities[entityID], dt)
 	}
+	s.resolveEntityCollisions()
+}
+
+func (s *SimState) resolveEntityCollisions() {
+	minDist := ENTITY_RADIUS * 2.0
+	minDist2 := minDist * minDist
+
+	for i := range s.Entities {
+		for j := i + 1; j < len(s.Entities); j++ {
+			a := &s.Entities[i]
+			b := &s.Entities[j]
+
+			delta := b.Pos.Sub(a.Pos)
+			dist2 := delta.Length2()
+			if dist2 >= minDist2 {
+				continue
+			}
+
+			normal := vec.V2{X: 1}
+			dist := 0.0
+			if dist2 > 0 {
+				dist = delta.Length()
+				normal = delta.Scale(1.0 / dist)
+			}
+
+			correction := normal.Scale((minDist - dist) / 2.0)
+			a.Pos = a.Pos.Sub(correction)
+			b.Pos = b.Pos.Add(correction)
+
+			if a.needsUpdateQueued {
+				a.needsUpdateQueued = false
+				s.updateRequiredQueue.PushBack(a.ID)
+			}
+			if b.needsUpdateQueued {
+				b.needsUpdateQueued = false
+				s.updateRequiredQueue.PushBack(b.ID)
+			}
+		}
+	}
 }
 
 func (s *SimState) makeRobotUpdate(id EntityID) fleetapi.RobotUpdate {
