@@ -98,9 +98,8 @@ func makeInitialStoredState() (stored storedAppState) {
 	}
 
 	for _, piece := range stored.Game.Pieces {
-		// x, y := positionToMM(piece.Position, stored.Game.BoardSize)
-		// robotID := stored.Simulator.AddRobot(fleetapi.Pose{XMM: x, YMM: y})
-		robotID := stored.Simulator.AddRobot(fleetapi.Pose{})
+		x, y := positionToMM(piece.Position, stored.Game.BoardSize)
+		robotID := stored.Simulator.AddRobot(fleetapi.Pose{XMM: x, YMM: y})
 		stored.Assignments.Assign(robotID, piece.ID)
 	}
 	return
