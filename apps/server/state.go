@@ -98,6 +98,8 @@ func makeInitialStoredState() (stored storedAppState) {
 	}
 
 	for _, piece := range stored.Game.Pieces {
+		// x, y := positionToMM(piece.Position, stored.Game.BoardSize)
+		// robotID := stored.Simulator.AddRobot(fleetapi.Pose{XMM: x, YMM: y})
 		robotID := stored.Simulator.AddRobot(fleetapi.Pose{})
 		stored.Assignments.Assign(robotID, piece.ID)
 	}
@@ -252,7 +254,7 @@ func (m *stateManager) run(initial storedAppState, broadcastChan chan<- sseEvent
 				state.Game = gameengine.NewGame8x8()
 				// TODO: Handle when game piece count changes
 				if len(state.Game.Pieces) != len(state.Robots) {
-					log.Panic("piece/robot count mismatch")
+					log.Panicf("piece/robot count mismatch: %d != %d", len(state.Game.Pieces), len(state.Robots))
 				}
 
 				state.Version++
