@@ -14,7 +14,7 @@ import (
 
 const (
 	roombaBaudRate = 115200
-	ledInterval    = 2 * time.Second
+	ledInterval    = 1 * time.Second
 )
 
 func main() {
@@ -40,13 +40,22 @@ func run(ctx context.Context, portPath string) error {
 	if _, err := (StartCommand{}).WriteTo(port); err != nil {
 		return fmt.Errorf("send start command: %w", err)
 	}
-	if _, err := (SafeCommand{}).WriteTo(port); err != nil {
+	if _, err := (SafeModeCommand{}).WriteTo(port); err != nil {
 		return fmt.Errorf("send safe mode command: %w", err)
 	}
+
+	time.Sleep(1 * time.Second)
 
 	ledsOn := false
 	if err := writeLEDs(port, ledsOn); err != nil {
 		return err
+	}
+
+	if _, err := (DriveCommand{
+		VelocityMMPerSec: 0,
+		RadiusMM:         DriveTurnClockwise,
+	}).WriteTo(port); err != nil {
+		return fmt.Errorf("drive: %w", err)
 	}
 
 	ticker := time.NewTicker(ledInterval)

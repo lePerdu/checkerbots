@@ -1,0 +1,10 @@
+[Unit]
+Description=Roomba controller
+After=network.target
+ConditionPathExists=/dev/serial0
+
+[Service]
+ExecStart=%h/.local/bin/roomba-controller /dev/serial0
+
+[Install]
+WantedBy=multi-user.target

@@ -130,21 +130,21 @@ func (command ControlCommand) WriteTo(w io.Writer) (int64, error) {
 	return writeCommand(w, command.Opcode(), nil)
 }
 
-// SafeCommand enters Safe mode.
-type SafeCommand struct{}
+// SafeModeCommand enters Safe mode.
+type SafeModeCommand struct{}
 
-func (SafeCommand) Opcode() Opcode { return OpcodeSafe }
+func (SafeModeCommand) Opcode() Opcode { return OpcodeSafe }
 
-func (command SafeCommand) WriteTo(w io.Writer) (int64, error) {
+func (command SafeModeCommand) WriteTo(w io.Writer) (int64, error) {
 	return writeCommand(w, command.Opcode(), nil)
 }
 
-// FullCommand enters Full mode.
-type FullCommand struct{}
+// FullModeCommand enters Full mode.
+type FullModeCommand struct{}
 
-func (FullCommand) Opcode() Opcode { return OpcodeFull }
+func (FullModeCommand) Opcode() Opcode { return OpcodeFull }
 
-func (command FullCommand) WriteTo(w io.Writer) (int64, error) {
+func (command FullModeCommand) WriteTo(w io.Writer) (int64, error) {
 	return writeCommand(w, command.Opcode(), nil)
 }
 
