@@ -1,6 +1,6 @@
 // Package roombaoi defines command payloads for the iRobot Roomba 600 Open
 // Interface (OI).
-package roombaoi
+package main
 
 import (
 	"fmt"
