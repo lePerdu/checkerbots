@@ -1,14 +1,22 @@
 {
-  "name": "checkerbots",
-  "build": {
-      "dockerfile": "Dockerfile"
-  },
-  "customizations": {
-    "zed": {
-      "extensions": [
-        "golangci-lint"
-      ]
-    }
-  },
-  "forwardPorts": [8080],
+    "name": "checkerbots",
+    "build": {
+        "dockerfile": "Dockerfile",
+    },
+    "customizations": {
+        "zed": {
+            "extensions": ["golangci-lint"],
+        },
+    },
+    "mounts": [
+        {
+            "source": "${localEnv:XDG_RUNTIME_DIR}/ssh-agent.socket",
+            "target": "/run/ssh-agent.socket",
+            "type": "bind",
+        },
+    ],
+    "containerEnv": {
+        "SSH_AUTH_SOCK": "/run/ssh-agent.socket",
+    },
+    "forwardPorts": [8080],
 }
