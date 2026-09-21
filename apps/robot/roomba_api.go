@@ -488,6 +488,18 @@ func (command PlayCommand) WriteTo(w io.Writer) (int64, error) {
 type SensorPacketID uint8
 
 const (
+	SensorPacketGroup0   SensorPacketID = 0
+	SensorPacketGroup1   SensorPacketID = 1
+	SensorPacketGroup2   SensorPacketID = 2
+	SensorPacketGroup3   SensorPacketID = 3
+	SensorPacketGroup4   SensorPacketID = 4
+	SensorPacketGroup5   SensorPacketID = 5
+	SensorPacketGroup6   SensorPacketID = 6
+	SensorPacketGroup100 SensorPacketID = 100
+	SensorPacketGroup101 SensorPacketID = 101
+	SensorPacketGroup106 SensorPacketID = 106
+	SensorPacketGroup107 SensorPacketID = 107
+
 	SensorPacketBumpsAndWheelDrops         SensorPacketID = 7
 	SensorPacketWall                       SensorPacketID = 8
 	SensorPacketCliffLeft                  SensorPacketID = 9
@@ -553,6 +565,17 @@ type sensorPacketPtr interface {
 }
 
 var sensorPacketIDByType = map[reflect.Type]SensorPacketID{
+	reflect.TypeFor[SensorGroup0Packet]():               SensorPacketGroup0,
+	reflect.TypeFor[SensorGroup1Packet]():               SensorPacketGroup1,
+	reflect.TypeFor[SensorGroup2Packet]():               SensorPacketGroup2,
+	reflect.TypeFor[SensorGroup3Packet]():               SensorPacketGroup3,
+	reflect.TypeFor[SensorGroup4Packet]():               SensorPacketGroup4,
+	reflect.TypeFor[SensorGroup5Packet]():               SensorPacketGroup5,
+	reflect.TypeFor[SensorGroup6Packet]():               SensorPacketGroup6,
+	reflect.TypeFor[SensorGroup100Packet]():             SensorPacketGroup100,
+	reflect.TypeFor[SensorGroup101Packet]():             SensorPacketGroup101,
+	reflect.TypeFor[SensorGroup106Packet]():             SensorPacketGroup106,
+	reflect.TypeFor[SensorGroup107Packet]():             SensorPacketGroup107,
 	reflect.TypeFor[BumpsAndWheelDropsPacket]():         SensorPacketBumpsAndWheelDrops,
 	reflect.TypeFor[WallPacket]():                       SensorPacketWall,
 	reflect.TypeFor[CliffLeftPacket]():                  SensorPacketCliffLeft,
@@ -882,6 +905,176 @@ func (SideBrushMotorCurrentPacket) ID() SensorPacketID { return SensorPacketSide
 type StasisPacket struct{ UInt8SensorPacket }
 
 func (StasisPacket) ID() SensorPacketID { return SensorPacketStasis }
+
+// SensorGroup0Packet contains packets 7 through 26.
+type SensorGroup0Packet struct {
+	SensorGroup1Packet
+	SensorGroup2Packet
+	SensorGroup3Packet
+}
+
+func (SensorGroup0Packet) ID() SensorPacketID { return SensorPacketGroup0 }
+func (packet *SensorGroup0Packet) ReadFrom(reader io.Reader) (int64, error) {
+	return ReadSensorPackets(packet, reader)
+}
+
+// SensorGroup1Packet contains packets 7 through 16.
+type SensorGroup1Packet struct {
+	BumpsAndWheelDrops BumpsAndWheelDropsPacket
+	Wall               WallPacket
+	CliffLeft          CliffLeftPacket
+	CliffFrontLeft     CliffFrontLeftPacket
+	CliffFrontRight    CliffFrontRightPacket
+	CliffRight         CliffRightPacket
+	VirtualWall        VirtualWallPacket
+	WheelOvercurrents  WheelOvercurrentsPacket
+	DirtDetect         DirtDetectPacket
+	Unused             UnusedPacket
+}
+
+func (SensorGroup1Packet) ID() SensorPacketID { return SensorPacketGroup1 }
+func (packet *SensorGroup1Packet) ReadFrom(reader io.Reader) (int64, error) {
+	return ReadSensorPackets(packet, reader)
+}
+
+// SensorGroup2Packet contains packets 17 through 20.
+type SensorGroup2Packet struct {
+	InfraredOmni InfraredOmniPacket
+	Buttons      ButtonsSensorPacket
+	Distance     DistancePacket
+	Angle        AnglePacket
+}
+
+func (SensorGroup2Packet) ID() SensorPacketID { return SensorPacketGroup2 }
+func (packet *SensorGroup2Packet) ReadFrom(reader io.Reader) (int64, error) {
+	return ReadSensorPackets(packet, reader)
+}
+
+// SensorGroup3Packet contains packets 21 through 26.
+type SensorGroup3Packet struct {
+	ChargingState   ChargingStatePacket
+	Voltage         VoltagePacket
+	Current         CurrentPacket
+	Temperature     TemperaturePacket
+	BatteryCharge   BatteryChargePacket
+	BatteryCapacity BatteryCapacityPacket
+}
+
+func (SensorGroup3Packet) ID() SensorPacketID { return SensorPacketGroup3 }
+func (packet *SensorGroup3Packet) ReadFrom(reader io.Reader) (int64, error) {
+	return ReadSensorPackets(packet, reader)
+}
+
+// SensorGroup4Packet contains packets 27 through 34.
+type SensorGroup4Packet struct {
+	WallSignal            WallSignalPacket
+	CliffLeftSignal       CliffLeftSignalPacket
+	CliffFrontLeftSignal  CliffFrontLeftSignalPacket
+	CliffFrontRightSignal CliffFrontRightSignalPacket
+	CliffRightSignal      CliffRightSignalPacket
+	Unused32              Unused32Packet
+	Unused33              Unused33Packet
+	ChargingSources       ChargingSourcesPacket
+}
+
+func (SensorGroup4Packet) ID() SensorPacketID { return SensorPacketGroup4 }
+func (packet *SensorGroup4Packet) ReadFrom(reader io.Reader) (int64, error) {
+	return ReadSensorPackets(packet, reader)
+}
+
+// SensorGroup5Packet contains packets 35 through 42.
+type SensorGroup5Packet struct {
+	OIMode                 OIModePacket
+	SongNumber             SongNumberPacket
+	SongPlaying            SongPlayingPacket
+	StreamPacketCount      StreamPacketCountPacket
+	RequestedVelocity      RequestedVelocityPacket
+	RequestedRadius        RequestedRadiusPacket
+	RequestedRightVelocity RequestedRightVelocityPacket
+	RequestedLeftVelocity  RequestedLeftVelocityPacket
+}
+
+func (SensorGroup5Packet) ID() SensorPacketID { return SensorPacketGroup5 }
+func (packet *SensorGroup5Packet) ReadFrom(reader io.Reader) (int64, error) {
+	return ReadSensorPackets(packet, reader)
+}
+
+// SensorGroup6Packet contains packets 7 through 42.
+type SensorGroup6Packet struct {
+	SensorGroup0Packet
+	SensorGroup4Packet
+	SensorGroup5Packet
+}
+
+func (SensorGroup6Packet) ID() SensorPacketID { return SensorPacketGroup6 }
+func (packet *SensorGroup6Packet) ReadFrom(reader io.Reader) (int64, error) {
+	return ReadSensorPackets(packet, reader)
+}
+
+// SensorGroup100Packet contains packets 7 through 58.
+type SensorGroup100Packet struct {
+	SensorGroup6Packet
+	SensorGroup101Packet
+}
+
+func (SensorGroup100Packet) ID() SensorPacketID { return SensorPacketGroup100 }
+func (packet *SensorGroup100Packet) ReadFrom(reader io.Reader) (int64, error) {
+	return ReadSensorPackets(packet, reader)
+}
+
+// SensorGroup101Packet contains packets 43 through 58.
+type SensorGroup101Packet struct {
+	LeftEncoderCounts          LeftEncoderCountsPacket
+	RightEncoderCounts         RightEncoderCountsPacket
+	LightBumper                LightBumperPacket
+	LightBumpLeftSignal        LightBumpLeftSignalPacket
+	LightBumpFrontLeftSignal   LightBumpFrontLeftSignalPacket
+	LightBumpCenterLeftSignal  LightBumpCenterLeftSignalPacket
+	LightBumpCenterRightSignal LightBumpCenterRightSignalPacket
+	LightBumpFrontRightSignal  LightBumpFrontRightSignalPacket
+	LightBumpRightSignal       LightBumpRightSignalPacket
+	InfraredLeft               InfraredLeftPacket
+	InfraredRight              InfraredRightPacket
+	LeftMotorCurrent           LeftMotorCurrentPacket
+	RightMotorCurrent          RightMotorCurrentPacket
+	MainBrushMotorCurrent      MainBrushMotorCurrentPacket
+	SideBrushMotorCurrent      SideBrushMotorCurrentPacket
+	Stasis                     StasisPacket
+}
+
+func (SensorGroup101Packet) ID() SensorPacketID { return SensorPacketGroup101 }
+func (packet *SensorGroup101Packet) ReadFrom(reader io.Reader) (int64, error) {
+	return ReadSensorPackets(packet, reader)
+}
+
+// SensorGroup106Packet contains packets 46 through 51.
+type SensorGroup106Packet struct {
+	LightBumpLeftSignal        LightBumpLeftSignalPacket
+	LightBumpFrontLeftSignal   LightBumpFrontLeftSignalPacket
+	LightBumpCenterLeftSignal  LightBumpCenterLeftSignalPacket
+	LightBumpCenterRightSignal LightBumpCenterRightSignalPacket
+	LightBumpFrontRightSignal  LightBumpFrontRightSignalPacket
+	LightBumpRightSignal       LightBumpRightSignalPacket
+}
+
+func (SensorGroup106Packet) ID() SensorPacketID { return SensorPacketGroup106 }
+func (packet *SensorGroup106Packet) ReadFrom(reader io.Reader) (int64, error) {
+	return ReadSensorPackets(packet, reader)
+}
+
+// SensorGroup107Packet contains packets 54 through 58.
+type SensorGroup107Packet struct {
+	LeftMotorCurrent      LeftMotorCurrentPacket
+	RightMotorCurrent     RightMotorCurrentPacket
+	MainBrushMotorCurrent MainBrushMotorCurrentPacket
+	SideBrushMotorCurrent SideBrushMotorCurrentPacket
+	Stasis                StasisPacket
+}
+
+func (SensorGroup107Packet) ID() SensorPacketID { return SensorPacketGroup107 }
+func (packet *SensorGroup107Packet) ReadFrom(reader io.Reader) (int64, error) {
+	return ReadSensorPackets(packet, reader)
+}
 
 // SensorCommand is an alias for SensorsCommand, which requests one sensor packet.
 type SensorCommand = SensorsCommand

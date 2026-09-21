@@ -196,6 +196,56 @@ func TestReadSensorPackets(t *testing.T) {
 	}
 }
 
+func TestSensorGroupPackets(t *testing.T) {
+	groups := []struct {
+		packet SensorPacket
+		id     SensorPacketID
+	}{
+		{SensorGroup0Packet{}, SensorPacketGroup0},
+		{SensorGroup1Packet{}, SensorPacketGroup1},
+		{SensorGroup2Packet{}, SensorPacketGroup2},
+		{SensorGroup3Packet{}, SensorPacketGroup3},
+		{SensorGroup4Packet{}, SensorPacketGroup4},
+		{SensorGroup5Packet{}, SensorPacketGroup5},
+		{SensorGroup6Packet{}, SensorPacketGroup6},
+		{SensorGroup100Packet{}, SensorPacketGroup100},
+		{SensorGroup101Packet{}, SensorPacketGroup101},
+		{SensorGroup106Packet{}, SensorPacketGroup106},
+		{SensorGroup107Packet{}, SensorPacketGroup107},
+	}
+	for _, group := range groups {
+		if group.packet.ID() != group.id {
+			t.Errorf("group packet ID = %d, want %d", group.packet.ID(), group.id)
+		}
+	}
+
+	var group SensorGroup0Packet
+	data := []byte{
+		1, 1, 0, 1, 0, 1, 0, 2, 3, 0,
+		4, 5, 0, 6, 255, 56,
+		2, 0, 10, 255, 56, 25, 0, 32, 0, 64,
+	}
+	n, err := group.ReadFrom(bytes.NewReader(data))
+	if err != nil {
+		t.Fatalf("SensorGroup0Packet.ReadFrom() error = %v", err)
+	}
+	if n != 26 {
+		t.Errorf("SensorGroup0Packet.ReadFrom() read %d bytes, want 26", n)
+	}
+	if !group.SensorGroup1Packet.Wall.Value {
+		t.Error("SensorGroup0Packet.ReadFrom() Wall.Value = false, want true")
+	}
+	if group.SensorGroup2Packet.Distance.Value != 6 {
+		t.Errorf("SensorGroup0Packet.ReadFrom() Distance.Value = %d, want 6", group.SensorGroup2Packet.Distance.Value)
+	}
+	if group.SensorGroup3Packet.Current.Value != -200 {
+		t.Errorf("SensorGroup0Packet.ReadFrom() Current.Value = %d, want -200", group.SensorGroup3Packet.Current.Value)
+	}
+	if group.SensorGroup3Packet.BatteryCapacity.Value != 64 {
+		t.Errorf("SensorGroup0Packet.ReadFrom() BatteryCapacity.Value = %d, want 64", group.SensorGroup3Packet.BatteryCapacity.Value)
+	}
+}
+
 func TestSensorPacketReadFrom(t *testing.T) {
 	voltage := VoltagePacket{}
 	n, err := voltage.ReadFrom(bytes.NewReader([]byte{0x12, 0x34}))
