@@ -58,48 +58,38 @@ const (
 	MessageTypePoseUpdate    MessageType = "pose_update"
 	MessageTypeCommandResult MessageType = "command_result"
 	MessageTypeError         MessageType = "error"
+	MessageTypePong          MessageType = "pong"
 )
 
 const (
-	CommandTypeIdentify   CommandType = "identify"
-	CommandTypeStop       CommandType = "stop"
-	CommandTypeMoveToPose CommandType = "move_to_pose"
-	CommandTypeSetPose    CommandType = "set_pose"
-	CommandTypePing       CommandType = "ping"
+	CommandTypeIdentify  CommandType = "identify"
+	CommandTypeStop      CommandType = "stop"
+	CommandTypeSetTarget CommandType = "set_target"
+	CommandTypeSetPose   CommandType = "set_pose"
+	CommandTypePing      CommandType = "ping"
 )
 
 const (
 	// Server-to-robot command message types exposed as message types for envelope discrimination.
 	MessageTypeIdentify   MessageType = MessageType(CommandTypeIdentify)
 	MessageTypeStop       MessageType = MessageType(CommandTypeStop)
-	MessageTypeMoveToPose MessageType = MessageType(CommandTypeMoveToPose)
+	MessageTypeMoveToPose MessageType = MessageType(CommandTypeSetTarget)
 	MessageTypeSetPose    MessageType = MessageType(CommandTypeSetPose)
 	MessageTypePing       MessageType = MessageType(CommandTypePing)
-)
-
-type RobotKind string
-
-const (
-	RobotKindSimulated RobotKind = "simulated"
-	RobotKindPhysical  RobotKind = "physical"
 )
 
 type PoseSource string
 
 const (
 	PoseSourceOdometry  PoseSource = "odometry"
-	PoseSourceCamera    PoseSource = "camera"
 	PoseSourceManual    PoseSource = "manual"
 	PoseSourceSimulator PoseSource = "simulator"
-	PoseSourceUnknown   PoseSource = "unknown"
 )
 
 type RobotStatus string
 
 const (
 	// These are the current recommended v0 status summary values.
-	RobotStatusOffline       RobotStatus = "offline"
-	RobotStatusPairing       RobotStatus = "pairing"
 	RobotStatusIdle          RobotStatus = "idle"
 	RobotStatusMoving        RobotStatus = "moving"
 	RobotStatusBlocked       RobotStatus = "blocked"
@@ -157,25 +147,26 @@ type CommandEnvelope struct {
 	CommandID string `json:"command_id"`
 }
 
+// Pos is a transport-level position expressed in millimeters.
+type Pos struct {
+	XMM float64 `json:"x_mm"`
+	YMM float64 `json:"y_mm"`
+}
+
 // Pose is a transport-level pose expressed in millimeters and radians.
-//
-// Frame is optional on the wire. v0 implementations should default it to
 type Pose struct {
-	XMM      float64 `json:"x_mm"`
-	YMM      float64 `json:"y_mm"`
-	ThetaRad float64 `json:"theta_rad"`
+	Pos
+	HeadingRad float64 `json:"heading_rad"`
 }
 
 // TelemetrySnapshot is the intentionally small, generic v0 telemetry shape.
 //
 // Extras may contain adapter-specific flat or nested data.
 type TelemetrySnapshot struct {
-	BatteryPercent         *float64       `json:"battery_percent,omitempty"`
-	IsMoving               *bool          `json:"is_moving,omitempty"`
-	LinearVelocityMMPerS   *float64       `json:"linear_velocity_mm_per_s,omitempty"`
-	AngularVelocityRadPerS *float64       `json:"angular_velocity_rad_per_s,omitempty"`
-	EStopActive            *bool          `json:"estop_active,omitempty"`
-	TemperatureC           *float64       `json:"temperature_c,omitempty"`
+	BatteryPercent         float64        `json:"battery_percent"`
+	LinearVelocityMMPerS   float64        `json:"linear_velocity_mm_per_s"`
+	AngularVelocityRadPerS float64        `json:"angular_velocity_rad_per_s"`
+	TemperatureC           float64        `json:"temperature_c"`
 	Extras                 map[string]any `json:"extras,omitempty"`
 }
 
@@ -185,11 +176,10 @@ type TelemetrySnapshot struct {
 // the basic supported commands.
 type HelloMessage struct {
 	Envelope
-	RobotKind         RobotKind     `json:"robot_kind"`
-	DisplayName       string        `json:"display_name,omitempty"`
-	SoftwareVersion   string        `json:"software_version,omitempty"`
-	SupportedCommands []CommandType `json:"supported_commands"`
-	Status            RobotStatus   `json:"status,omitempty"`
+	RobotModel      string      `json:"robot_model"`
+	DisplayName     string      `json:"display_name"`
+	SoftwareVersion string      `json:"software_version"`
+	Status          RobotStatus `json:"status"`
 }
 
 // HeartbeatMessage is the periodic liveness message.
@@ -244,21 +234,17 @@ type ErrorMessage struct {
 // IdentifyCommand asks the robot to make itself easy for a human operator to identify.
 type IdentifyCommand struct {
 	CommandEnvelope
-	DurationMS *int `json:"duration_ms,omitempty"`
 }
 
 // StopCommand asks the robot to stop current motion as soon as possible.
 type StopCommand struct {
 	CommandEnvelope
-	Reason string `json:"reason,omitempty"`
 }
 
-// MoveToPoseCommand asks the robot to move to an explicit pose.
-type MoveToPoseCommand struct {
+// SetTargetCommand asks the robot to move to an explicit pose.
+type SetTargetCommand struct {
 	CommandEnvelope
-	Pose                Pose     `json:"pose"`
-	PositionToleranceMM *float64 `json:"position_tolerance_mm,omitempty"`
-	HeadingToleranceRad *float64 `json:"heading_tolerance_rad,omitempty"`
+	Pos Pos `json:"pos"`
 }
 
 // SetPoseCommand provides an authoritative pose fix, usually after manual
@@ -266,14 +252,5 @@ type MoveToPoseCommand struct {
 type SetPoseCommand struct {
 	CommandEnvelope
 	Pose   Pose   `json:"pose"`
-	Source string `json:"source,omitempty"`
-}
-
-// PingCommand is a connectivity test and latency probe.
-//
-// A robot may answer with a CommandResultMessage whose Result contains the
-// echoed payload.
-type PingCommand struct {
-	CommandEnvelope
-	Payload string `json:"payload,omitempty"`
+	Source string `json:"source"`
 }
