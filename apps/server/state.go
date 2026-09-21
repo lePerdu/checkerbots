@@ -99,15 +99,7 @@ func makeInitialStoredState() (stored storedAppState) {
 	}
 
 	for _, piece := range stored.Game.Pieces {
-		x, y := positionToMM(piece.Position, stored.Game.BoardSize)
-		headingRad := float64(0)
-		if piece.Side == gameengine.PlayerSideRed {
-			headingRad = math.Pi
-		}
-		if piece.Kind == gameengine.PieceKindKing {
-			headingRad = math.Pi - headingRad
-		}
-		robotID := stored.Simulator.AddRobot(fleetapi.Pose{XMM: x, YMM: y, HeadingRad: headingRad})
+		robotID := stored.Simulator.AddRobot(targetFleetPose(piece, stored.Game.BoardSize))
 		stored.Assignments.Assign(robotID, piece.ID)
 	}
 	return
@@ -185,6 +177,28 @@ func positionToMM(pos gameengine.Position, boardSize int) (xMM, yMM float64) {
 	return
 }
 
+func idlePieceHeading(piece gameengine.Piece) float64 {
+	heading := 0.0
+	if piece.Side == gameengine.PlayerSideRed {
+		heading = math.Pi
+	}
+	// Kings face the other way
+	// TODO: Should this just be the last direction the king moved?
+	if piece.Kind == gameengine.PieceKindKing {
+		heading = math.Pi - heading
+	}
+	return heading
+}
+
+func targetFleetPose(piece gameengine.Piece, boardSize int) fleetapi.Pose {
+	xMM, yMM := positionToMM(piece.Position, boardSize)
+	return fleetapi.Pose{
+		XMM:        xMM,
+		YMM:        yMM,
+		HeadingRad: idlePieceHeading(piece),
+	}
+}
+
 // syncRobotGoals ensures state.Planner matches the current piece positions.
 // It returns all RobotIDs whose goals were created or updated.
 func syncRobotGoals(state *appState) {
@@ -203,10 +217,9 @@ func syncRobotGoals(state *appState) {
 		// TODO: Ensure that every robot always has a goal?
 		if currentGoal, exists := state.Planner.Goals[robotID]; !exists || currentGoal != newGoal {
 			state.Planner.Goals[robotID] = newGoal
-			xMM, yMM := positionToMM(piece.Position, state.Game.BoardSize)
 			state.fleetCmdChan <- fleetapi.RobotCommand{
 				RobotID:    robotID,
-				TargetPose: fleetapi.Pose{XMM: xMM, YMM: yMM},
+				TargetPose: targetFleetPose(piece, state.Game.BoardSize),
 			}
 		}
 	}

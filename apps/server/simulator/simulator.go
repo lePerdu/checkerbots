@@ -81,16 +81,36 @@ type SimState struct {
 
 type EntityID int
 
-type Entity struct {
-	ID        EntityID
-	RobotID   fleetapi.RobotID
-	Pos       vec.V2
-	Vel       vec.V2
-	TargetPos vec.V2
-	// HeadingRad is the facing direction in radians.
+type Pose struct {
+	Pos vec.V2
+	// Heading is the facing direction in radians.
 	// 0 points from the black side toward the red side (+Y). Preserved from the
 	// last non-zero velocity so the robot keeps its last heading when stopped.
-	HeadingRad float64
+	Heading float64
+}
+
+func poseFromFleetPose(pose fleetapi.Pose) Pose {
+	return Pose{
+		Pos:     vec.V2{X: pose.XMM, Y: pose.YMM}.Scale(1.0 / 1000.0),
+		Heading: pose.HeadingRad,
+	}
+}
+
+func poseToFleetPose(pose Pose) fleetapi.Pose {
+	return fleetapi.Pose{
+		XMM:        pose.Pos.X * 1000.0,
+		YMM:        pose.Pos.Y * 1000.0,
+		HeadingRad: pose.Heading,
+	}
+}
+
+type Entity struct {
+	ID            EntityID
+	RobotID       fleetapi.RobotID
+	Pose          Pose
+	Vel           vec.V2
+	TargetPose    Pose
+	reachedTarget bool
 	// Whether the latest entity state has been published to the update channel
 	needsUpdateQueued bool
 }
@@ -109,12 +129,10 @@ func NewSimulator() SimState {
 func (s *SimState) AddRobot(initialPose fleetapi.Pose) fleetapi.RobotID {
 	entityID := EntityID(len(s.Entities))
 	robotID := fleetapi.RobotID("r" + strconv.Itoa(int(entityID)))
-	pos := vec.V2{X: initialPose.XMM, Y: initialPose.YMM}.Scale(1.0 / 1000.0)
 	s.Entities = append(s.Entities, Entity{
-		ID:         entityID,
-		RobotID:    robotID,
-		Pos:        pos,
-		HeadingRad: initialPose.HeadingRad,
+		ID:      entityID,
+		RobotID: robotID,
+		Pose:    poseFromFleetPose(initialPose),
 	})
 	s.EntityIDByRobotID[robotID] = entityID
 	return robotID
@@ -181,14 +199,19 @@ func (s *SimState) handleCommand(cmd fleetapi.RobotCommand) {
 	if !exists {
 		log.Panic("sim: unknown robot ID:", cmd.RobotID)
 	}
-	s.Entities[entity_id].TargetPos = vec.V2{
-		X: cmd.TargetPose.XMM, Y: cmd.TargetPose.YMM,
-	}.Scale(1.0 / 1000.0)
+	log.Printf("sim: %s: %v", cmd.RobotID, cmd.TargetPose)
+	s.Entities[entity_id].TargetPose = poseFromFleetPose(cmd.TargetPose)
 }
 
 func (s *SimState) step(dt time.Duration) {
 	for entityID := range s.Entities {
-		s.stepEntity(&s.Entities[entityID], dt)
+		entity := &s.Entities[entityID]
+		prevPose := entity.Pose
+		s.stepEntity(entity, dt)
+		if prevPose != entity.Pose && entity.needsUpdateQueued {
+			entity.needsUpdateQueued = false
+			s.updateRequiredQueue.PushBack(entity.ID)
+		}
 	}
 	s.resolveEntityCollisions()
 }
@@ -202,7 +225,7 @@ func (s *SimState) resolveEntityCollisions() {
 			a := &s.Entities[i]
 			b := &s.Entities[j]
 
-			delta := b.Pos.Sub(a.Pos)
+			delta := b.Pose.Pos.Sub(a.Pose.Pos)
 			dist2 := delta.Length2()
 			if dist2 >= minDist2 {
 				continue
@@ -216,8 +239,8 @@ func (s *SimState) resolveEntityCollisions() {
 			}
 
 			correction := normal.Scale((minDist - dist) / 2.0)
-			a.Pos = a.Pos.Sub(correction)
-			b.Pos = b.Pos.Add(correction)
+			a.Pose.Pos = a.Pose.Pos.Sub(correction)
+			b.Pose.Pos = b.Pose.Pos.Add(correction)
 
 			if a.needsUpdateQueued {
 				a.needsUpdateQueued = false
@@ -234,32 +257,28 @@ func (s *SimState) resolveEntityCollisions() {
 func (s *SimState) makeRobotUpdate(id EntityID) fleetapi.RobotUpdate {
 	entity := s.Entities[id]
 	return fleetapi.RobotUpdate{
-		RobotID: entity.RobotID,
-		CurrentPose: fleetapi.Pose{
-			XMM:        entity.Pos.X * 1000.0,
-			YMM:        entity.Pos.Y * 1000.0,
-			HeadingRad: entity.HeadingRad,
-		},
+		RobotID:     entity.RobotID,
+		CurrentPose: poseToFleetPose(entity.Pose),
 	}
 }
 
 func (s *SimState) stepEntity(entity *Entity, dt time.Duration) {
-	targetDelta := entity.TargetPos.Sub(entity.Pos)
+	targetDelta := entity.TargetPose.Pos.Sub(entity.Pose.Pos)
 	targetDist := targetDelta.Length()
 	if targetDist < ROBOT_TOLERANCE {
 		entity.Vel = vec.V2{}
+		entity.Pose.Heading = entity.TargetPose.Heading
 		return
 	}
+
+	theadingToTargetPos := math.Atan2(entity.Vel.X, entity.Vel.Y)
+	entity.Pose.Heading = theadingToTargetPos
+
 	entity.Vel = targetDelta.Normalize().Scale(ROBOT_MAX_SPEED)
 	// Update heading from velocity. 0 = +Y (toward red side); increases clockwise.
-	entity.HeadingRad = math.Atan2(entity.Vel.X, entity.Vel.Y)
 	stepDelta := entity.Vel.Scale(dt.Seconds())
 	if stepDelta.Length() > targetDist {
 		stepDelta = targetDelta
 	}
-	entity.Pos = entity.Pos.Add(stepDelta)
-	if entity.needsUpdateQueued {
-		entity.needsUpdateQueued = false
-		s.updateRequiredQueue.PushBack(entity.ID)
-	}
+	entity.Pose.Pos = entity.Pose.Pos.Add(stepDelta)
 }
