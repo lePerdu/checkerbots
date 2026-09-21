@@ -193,6 +193,20 @@ h1 {
   box-shadow: inset 0 4px 8px rgba(255,255,255,0.12), inset 0 -6px 10px rgba(0,0,0,0.35);
 }
 
+/* Directional indicator: small dot at the front of the robot (heading 0 = top = toward red side). */
+.robot::before {
+  content: '';
+  position: absolute;
+  top: 12%;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 22%;
+  height: 22%;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.75);
+  pointer-events: none;
+}
+
 .robot--red {
   background: var(--red-piece);
   color: #fff5f5;

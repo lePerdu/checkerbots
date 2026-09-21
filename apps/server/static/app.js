@@ -376,15 +376,16 @@ function syncRobotElement(robot) {
   if (!el) {
     el = document.createElement('div');
     el.id = elemId;
-    el.textContent = 'R';
     robotBoardElement.appendChild(el);
   }
   const side = robotPieceSide(robot);
   el.className = side ? `robot robot--${side}` : 'robot';
   const { leftPct, topPct, sizePct } = robotCSSPercent(robot);
+  const headingRad = typeof robot.pose.heading_rad === 'number' ? robot.pose.heading_rad : 0;
   el.style.left = `${leftPct}%`;
   el.style.top = `${topPct}%`;
   el.style.width = `${sizePct}%`;
+  el.style.transform = `translate(-50%, -50%) rotate(${headingRad}rad)`;
 }
 
 // Renders the checkerboard grid of the robot board and all current robots.

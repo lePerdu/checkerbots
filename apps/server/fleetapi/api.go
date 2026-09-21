@@ -9,6 +9,10 @@ type RobotID string
 type Pose struct {
 	XMM float64
 	YMM float64
+	// HeadingRad is the robot's facing direction in radians.
+	// 0 points from the black side toward the red side (+Y in world coordinates).
+	// Angles increase clockwise when viewed from above.
+	HeadingRad float64
 }
 
 type RobotCommand struct {

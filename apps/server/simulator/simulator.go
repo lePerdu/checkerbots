@@ -5,6 +5,7 @@ import (
 	"checkerbots/apps/server/vec"
 	"context"
 	"log"
+	"math"
 	"strconv"
 	"time"
 )
@@ -86,6 +87,10 @@ type Entity struct {
 	Pos       vec.V2
 	Vel       vec.V2
 	TargetPos vec.V2
+	// HeadingRad is the facing direction in radians.
+	// 0 points from the black side toward the red side (+Y). Preserved from the
+	// last non-zero velocity so the robot keeps its last heading when stopped.
+	HeadingRad float64
 	// Whether the latest entity state has been published to the update channel
 	needsUpdateQueued bool
 }
@@ -105,7 +110,12 @@ func (s *SimState) AddRobot(initialPose fleetapi.Pose) fleetapi.RobotID {
 	entityID := EntityID(len(s.Entities))
 	robotID := fleetapi.RobotID("r" + strconv.Itoa(int(entityID)))
 	pos := vec.V2{X: initialPose.XMM, Y: initialPose.YMM}.Scale(1.0 / 1000.0)
-	s.Entities = append(s.Entities, Entity{ID: entityID, RobotID: robotID, Pos: pos})
+	s.Entities = append(s.Entities, Entity{
+		ID:         entityID,
+		RobotID:    robotID,
+		Pos:        pos,
+		HeadingRad: initialPose.HeadingRad,
+	})
 	s.EntityIDByRobotID[robotID] = entityID
 	return robotID
 }
@@ -226,8 +236,9 @@ func (s *SimState) makeRobotUpdate(id EntityID) fleetapi.RobotUpdate {
 	return fleetapi.RobotUpdate{
 		RobotID: entity.RobotID,
 		CurrentPose: fleetapi.Pose{
-			XMM: entity.Pos.X * 1000.0,
-			YMM: entity.Pos.Y * 1000.0,
+			XMM:        entity.Pos.X * 1000.0,
+			YMM:        entity.Pos.Y * 1000.0,
+			HeadingRad: entity.HeadingRad,
 		},
 	}
 }
@@ -240,6 +251,8 @@ func (s *SimState) stepEntity(entity *Entity, dt time.Duration) {
 		return
 	}
 	entity.Vel = targetDelta.Normalize().Scale(ROBOT_MAX_SPEED)
+	// Update heading from velocity. 0 = +Y (toward red side); increases clockwise.
+	entity.HeadingRad = math.Atan2(entity.Vel.X, entity.Vel.Y)
 	stepDelta := entity.Vel.Scale(dt.Seconds())
 	if stepDelta.Length() > targetDist {
 		stepDelta = targetDelta

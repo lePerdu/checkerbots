@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/gob"
 	"log"
+	"math"
 	"os"
 	"time"
 
@@ -99,7 +100,14 @@ func makeInitialStoredState() (stored storedAppState) {
 
 	for _, piece := range stored.Game.Pieces {
 		x, y := positionToMM(piece.Position, stored.Game.BoardSize)
-		robotID := stored.Simulator.AddRobot(fleetapi.Pose{XMM: x, YMM: y})
+		headingRad := float64(0)
+		if piece.Side == gameengine.PlayerSideRed {
+			headingRad = math.Pi
+		}
+		if piece.Kind == gameengine.PieceKindKing {
+			headingRad = math.Pi - headingRad
+		}
+		robotID := stored.Simulator.AddRobot(fleetapi.Pose{XMM: x, YMM: y, HeadingRad: headingRad})
 		stored.Assignments.Assign(robotID, piece.ID)
 	}
 	return
@@ -282,10 +290,11 @@ func (m *stateManager) run(initial storedAppState, broadcastChan chan<- sseEvent
 		case update := <-state.robotUpdateChan:
 			state.Robots[update.RobotID] = robotInfo{
 				Pose: Pose{
-					XMM: update.CurrentPose.XMM,
-					YMM: update.CurrentPose.YMM,
+					XMM:        update.CurrentPose.XMM,
+					YMM:        update.CurrentPose.YMM,
+					HeadingRad: update.CurrentPose.HeadingRad,
 				},
-				UpdatedAt: time.Now(), // TODO: Include in update event?
+				UpdatedAt: time.Now(),
 			}
 			broadcastChan <- sseEvent{name: "robot.updated", data: buildRobotSnapshot(state, update.RobotID)}
 		}

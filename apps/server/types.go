@@ -34,4 +34,8 @@ type RobotID = fleetapi.RobotID
 type Pose struct {
 	XMM float64 `json:"x_mm"`
 	YMM float64 `json:"y_mm"`
+	// HeadingRad is the robot's facing direction in radians.
+	// 0 points from the black side toward the red side (+Y in world coordinates).
+	// Angles increase clockwise when viewed from above.
+	HeadingRad float64 `json:"heading_rad"`
 }
