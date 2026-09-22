@@ -115,6 +115,7 @@ type Entity struct {
 }
 
 const ENTITY_RADIUS = 0.34 / 2.0
+const ROBOT_WHEEL_BASE_RADIUS = 0.232 / 2.0
 const ROBOT_MAX_SPEED = 0.3
 const ROBOT_POS_TOLERANCE = 0.02
 const ROBOT_MAX_ANGULAR_SPEED = math.Pi / 2.0
@@ -200,7 +201,6 @@ func (s *SimState) handleCommand(cmd fleetapi.RobotCommand) {
 	if !exists {
 		log.Panic("sim: unknown robot ID:", cmd.RobotID)
 	}
-	log.Printf("sim: %s: %v", cmd.RobotID, cmd.TargetPose)
 	s.Entities[entity_id].TargetPose = poseFromFleetPose(cmd.TargetPose)
 }
 
@@ -264,6 +264,74 @@ func (s *SimState) makeRobotUpdate(id EntityID) fleetapi.RobotUpdate {
 }
 
 func (entity *Entity) step(dt time.Duration) {
+	entity.stepCurved(dt)
+}
+
+func (entity *Entity) stepCurved(dt time.Duration) {
+	targetDelta := entity.TargetPose.Pos.Sub(entity.Pose.Pos)
+	targetDist := targetDelta.Length()
+	if targetDist < ROBOT_POS_TOLERANCE {
+		entity.stepHeading(entity.TargetPose.Heading, dt)
+		return
+	}
+
+	headingToTargetPos := math.Atan2(targetDelta.X, targetDelta.Y)
+	deltaHeading := getHeadingDelta(headingToTargetPos - entity.Pose.Heading)
+	// Turn until facing the general direction
+	if math.Abs(deltaHeading) > math.Pi/6 {
+		entity.stepHeading(headingToTargetPos, dt)
+		return
+	}
+
+	// Go straight if radius would be <= 1mm
+	linearTol := math.Asin(0.001 * 2 / targetDist)
+	if math.Abs(deltaHeading) <= linearTol {
+		vel := targetDelta.Normalize().Scale(ROBOT_MAX_SPEED)
+		// Update heading from velocity. 0 = +Y (toward red side); increases clockwise.
+		stepDelta := vel.Scale(dt.Seconds())
+		if stepDelta.Length() > targetDist {
+			stepDelta = targetDelta
+		}
+		entity.Pose.Pos = entity.Pose.Pos.Add(stepDelta)
+		return
+	}
+
+	// Negative = turn left, positive = turn right
+	radius := targetDist / 2 / math.Sin(deltaHeading)
+
+	k := ROBOT_WHEEL_BASE_RADIUS / 2 / radius
+	ratioVrVl := (1 + k) / (1 - k)
+	var vl, vr float64
+	// Whichever side is greater must be positive so that the linear speed is positive
+	if math.Abs(ratioVrVl) >= 1 {
+		vr = ROBOT_MAX_SPEED
+		vl = vr / ratioVrVl
+	} else {
+		vl = ROBOT_MAX_SPEED
+		vr = vl * ratioVrVl
+	}
+
+	linearSpeed := (vr + vl) / 2
+	if linearSpeed < 0 {
+		log.Panicf("Unexpected negative linear speed: %f: radius=%f vr=%f vl=%f", linearSpeed, radius, vr, vl)
+	}
+	if linearSpeed*dt.Seconds() > targetDist {
+		linearSpeed = targetDist / dt.Seconds()
+	}
+
+	linearVel := vec.V2{
+		// sin/cos are flipped since heading is +Y->-X, not +X->+Y
+		X: math.Sin(entity.Pose.Heading),
+		Y: math.Cos(entity.Pose.Heading),
+	}.Scale(linearSpeed)
+	angularVel := linearSpeed / radius
+
+	// TODO: Slow down as we approach the target
+	entity.Pose.Pos = entity.Pose.Pos.Add(linearVel.Scale(dt.Seconds()))
+	entity.Pose.Heading += angularVel * dt.Seconds()
+}
+
+func (entity *Entity) stepLinear(dt time.Duration) {
 	targetDelta := entity.TargetPose.Pos.Sub(entity.Pose.Pos)
 	targetDist := targetDelta.Length()
 	if targetDist < ROBOT_POS_TOLERANCE {
@@ -287,13 +355,7 @@ func (entity *Entity) step(dt time.Duration) {
 }
 
 func (entity *Entity) stepHeading(targetHeading float64, dt time.Duration) (done bool) {
-	headingDelta := math.Mod(targetHeading-entity.Pose.Heading, 2*math.Pi)
-	if headingDelta > math.Pi {
-		headingDelta -= 2 * math.Pi
-	}
-	if headingDelta < -math.Pi {
-		headingDelta += 2 * math.Pi
-	}
+	headingDelta := getHeadingDelta(targetHeading - entity.Pose.Heading)
 	if math.Abs(headingDelta) < ROBOT_ANGLE_TOLERANCE {
 		return true
 	}
@@ -302,4 +364,16 @@ func (entity *Entity) stepHeading(targetHeading float64, dt time.Duration) (done
 	headingStepDelta := math.Copysign(headingStepMag, headingDelta)
 	entity.Pose.Heading += headingStepDelta
 	return false
+}
+
+// getHeadingDelta returns the shortest angular distance between two headings, in the range [-pi, pi]
+func getHeadingDelta(delta float64) float64 {
+	delta = math.Mod(delta, 2*math.Pi)
+	if delta > math.Pi {
+		delta -= 2 * math.Pi
+	}
+	if delta < -math.Pi {
+		delta += 2 * math.Pi
+	}
+	return delta
 }
