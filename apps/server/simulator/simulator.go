@@ -108,7 +108,6 @@ type Entity struct {
 	ID            EntityID
 	RobotID       fleetapi.RobotID
 	Pose          Pose
-	Vel           vec.V2
 	TargetPose    Pose
 	reachedTarget bool
 	// Whether the latest entity state has been published to the update channel
@@ -117,7 +116,9 @@ type Entity struct {
 
 const ENTITY_RADIUS = 0.34 / 2.0
 const ROBOT_MAX_SPEED = 0.3
-const ROBOT_TOLERANCE = 0.02
+const ROBOT_POS_TOLERANCE = 0.02
+const ROBOT_MAX_ANGULAR_SPEED = math.Pi / 2.0
+const ROBOT_ANGLE_TOLERANCE = math.Pi / 180.0
 const SIM_TIME_STEP = time.Second / 30.0
 
 func NewSimulator() SimState {
@@ -207,7 +208,7 @@ func (s *SimState) step(dt time.Duration) {
 	for entityID := range s.Entities {
 		entity := &s.Entities[entityID]
 		prevPose := entity.Pose
-		s.stepEntity(entity, dt)
+		entity.step(dt)
 		if prevPose != entity.Pose && entity.needsUpdateQueued {
 			entity.needsUpdateQueued = false
 			s.updateRequiredQueue.PushBack(entity.ID)
@@ -262,23 +263,43 @@ func (s *SimState) makeRobotUpdate(id EntityID) fleetapi.RobotUpdate {
 	}
 }
 
-func (s *SimState) stepEntity(entity *Entity, dt time.Duration) {
+func (entity *Entity) step(dt time.Duration) {
 	targetDelta := entity.TargetPose.Pos.Sub(entity.Pose.Pos)
 	targetDist := targetDelta.Length()
-	if targetDist < ROBOT_TOLERANCE {
-		entity.Vel = vec.V2{}
-		entity.Pose.Heading = entity.TargetPose.Heading
+	if targetDist < ROBOT_POS_TOLERANCE {
+		entity.stepHeading(entity.TargetPose.Heading, dt)
 		return
 	}
 
-	theadingToTargetPos := math.Atan2(entity.Vel.X, entity.Vel.Y)
-	entity.Pose.Heading = theadingToTargetPos
+	// Fix heading first
+	headingToTargetPos := math.Atan2(targetDelta.X, targetDelta.Y)
+	if !entity.stepHeading(headingToTargetPos, dt) {
+		return
+	}
 
-	entity.Vel = targetDelta.Normalize().Scale(ROBOT_MAX_SPEED)
+	vel := targetDelta.Normalize().Scale(ROBOT_MAX_SPEED)
 	// Update heading from velocity. 0 = +Y (toward red side); increases clockwise.
-	stepDelta := entity.Vel.Scale(dt.Seconds())
+	stepDelta := vel.Scale(dt.Seconds())
 	if stepDelta.Length() > targetDist {
 		stepDelta = targetDelta
 	}
 	entity.Pose.Pos = entity.Pose.Pos.Add(stepDelta)
+}
+
+func (entity *Entity) stepHeading(targetHeading float64, dt time.Duration) (done bool) {
+	headingDelta := math.Mod(targetHeading-entity.Pose.Heading, 2*math.Pi)
+	if headingDelta > math.Pi {
+		headingDelta -= 2 * math.Pi
+	}
+	if headingDelta < -math.Pi {
+		headingDelta += 2 * math.Pi
+	}
+	if math.Abs(headingDelta) < ROBOT_ANGLE_TOLERANCE {
+		return true
+	}
+
+	headingStepMag := min(ROBOT_MAX_ANGULAR_SPEED*dt.Seconds(), math.Abs(headingDelta))
+	headingStepDelta := math.Copysign(headingStepMag, headingDelta)
+	entity.Pose.Heading += headingStepDelta
+	return false
 }
