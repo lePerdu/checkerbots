@@ -71,10 +71,6 @@ func GameFromStored(stored StoredGame) Game {
 	return game
 }
 
-func (game *Game) ToStored() StoredGame {
-	return game.StoredGame
-}
-
 func makePieceID(side PlayerSide, index int) PieceID {
 	return PieceID(string(side) + "-" + strconv.Itoa(index+1))
 }

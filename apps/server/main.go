@@ -15,7 +15,7 @@ import (
 	"syscall"
 	"time"
 
-	gameengine "checkerbots/apps/server/game-engine"
+	gametypes "checkerbots/apps/server/game-types"
 )
 
 //go:embed static/* templates/*
@@ -38,10 +38,10 @@ type AppSnapshot struct {
 
 // RobotSnapshot is the serializable form of a single robot's state.
 type RobotSnapshot struct {
-	ID        RobotID            `json:"id"`
-	PieceID   gameengine.PieceID `json:"piece_id"`
-	Pose      Pose               `json:"pose"`
-	UpdatedAt time.Time          `json:"updated_at"`
+	ID        RobotID           `json:"id"`
+	PieceID   gametypes.PieceID `json:"piece_id"`
+	Pose      Pose              `json:"pose"`
+	UpdatedAt time.Time         `json:"updated_at"`
 }
 
 // GameSnapshot carries the board and game state delivered to the frontend.
@@ -54,12 +54,12 @@ type RobotSnapshot struct {
 // (on-board or captured) all share the same Row/Col position fields, with
 // their extended-grid position already resolved server-side.
 type GameSnapshot struct {
-	Turn              string                                    `json:"turn"`
-	GameOver          *gameOverResponse                         `json:"gameOver"`
-	BoardSize         int                                       `json:"boardSize"`
-	CaptureColumns    int                                       `json:"captureColumns"`
-	Pieces            []gamePiece                               `json:"pieces"`
-	LegalMovesByPiece map[gameengine.PieceID][]legalMoveSummary `json:"legalMovesByPiece"`
+	Turn              string                                   `json:"turn"`
+	GameOver          *gameOverResponse                        `json:"gameOver"`
+	BoardSize         int                                      `json:"boardSize"`
+	CaptureColumns    int                                      `json:"captureColumns"`
+	Pieces            []gamePiece                              `json:"pieces"`
+	LegalMovesByPiece map[gametypes.PieceID][]legalMoveSummary `json:"legalMovesByPiece"`
 }
 
 type gameOverResponse struct {
@@ -87,12 +87,12 @@ type applyMoveRequest struct {
 // currently on the board or set aside as captured - both share the same
 // Row/Col position fields, using the extended grid described on GameSnapshot.
 type gamePiece struct {
-	ID      gameengine.PieceID `json:"id"`
-	Side    string             `json:"side"`
-	Kind    string             `json:"kind"`
-	Classes string             `json:"classes"`
-	Row     int                `json:"row"`
-	Col     int                `json:"col"`
+	ID      gametypes.PieceID `json:"id"`
+	Side    string            `json:"side"`
+	Kind    string            `json:"kind"`
+	Classes string            `json:"classes"`
+	Row     int               `json:"row"`
+	Col     int               `json:"col"`
 }
 
 type errorResponse struct {
@@ -179,9 +179,9 @@ func main() {
 			writeJSONError(w, http.StatusBadRequest, "bad_request", "move path must contain at least 2 positions")
 			return
 		}
-		move := make(gameengine.Move, len(req.Path))
+		move := make(gametypes.Move, len(req.Path))
 		for i, p := range req.Path {
-			move[i] = gameengine.Position{Row: p.Row, Col: p.Col}
+			move[i] = gametypes.Position{Row: p.Row, Col: p.Col}
 		}
 		if err := mgr.applyMove(move); err != nil {
 			writeJSONError(w, http.StatusConflict, "illegal_move", err.Reason)
@@ -305,11 +305,11 @@ func buildRobotSnapshot(state *appState, id RobotID) RobotSnapshot {
 	}
 }
 
-func buildGameSnapshot(game *gameengine.Game) GameSnapshot {
+func buildGameSnapshot(game *gametypes.Game) GameSnapshot {
 	// activeByPosition only holds non-captured pieces: captured pieces have no
-	// legal moves, and gameengine already gives them an extended-grid Position
+	// legal moves, and gametypes already gives them an extended-grid Position
 	// (in the capture columns) that's disjoint from any real board position.
-	activeByPosition := make(map[gameengine.Position]gameengine.Piece, len(game.Pieces))
+	activeByPosition := make(map[gametypes.Position]gametypes.Piece, len(game.Pieces))
 	pieces := make([]gamePiece, 0, len(game.Pieces))
 	for _, piece := range game.Pieces {
 		if !piece.Captured {
@@ -325,7 +325,7 @@ func buildGameSnapshot(game *gameengine.Game) GameSnapshot {
 		})
 	}
 
-	legalMovesByPiece := make(map[gameengine.PieceID][]legalMoveSummary)
+	legalMovesByPiece := make(map[gametypes.PieceID][]legalMoveSummary)
 	for _, move := range game.LegalMoves {
 		if len(move) < 2 {
 			continue
@@ -359,16 +359,16 @@ func buildGameSnapshot(game *gameengine.Game) GameSnapshot {
 	}
 }
 
-func pieceClasses(piece gameengine.Piece) string {
+func pieceClasses(piece gametypes.Piece) string {
 	classes := "piece piece--" + string(piece.Side)
-	if piece.Kind == gameengine.PieceKindKing {
+	if piece.Kind == gametypes.PieceKindKing {
 		classes += " piece--king"
 	}
 	return classes
 }
 
-func titleCaseTurn(side gameengine.PlayerSide) string {
-	if side == gameengine.PlayerSideBlack {
+func titleCaseTurn(side gametypes.PlayerSide) string {
+	if side == gametypes.PlayerSideBlack {
 		return "Black"
 	}
 	return "Red"

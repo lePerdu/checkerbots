@@ -71,11 +71,11 @@ const (
 
 const (
 	// Server-to-robot command message types exposed as message types for envelope discrimination.
-	MessageTypeIdentify   MessageType = MessageType(CommandTypeIdentify)
-	MessageTypeStop       MessageType = MessageType(CommandTypeStop)
-	MessageTypeMoveToPose MessageType = MessageType(CommandTypeSetTarget)
-	MessageTypeSetPose    MessageType = MessageType(CommandTypeSetPose)
-	MessageTypePing       MessageType = MessageType(CommandTypePing)
+	MessageTypeIdentify  MessageType = MessageType(CommandTypeIdentify)
+	MessageTypeStop      MessageType = MessageType(CommandTypeStop)
+	MessageTypeSetTarget MessageType = MessageType(CommandTypeSetTarget)
+	MessageTypeSetPose   MessageType = MessageType(CommandTypeSetPose)
+	MessageTypePing      MessageType = MessageType(CommandTypePing)
 )
 
 type PoseSource string
@@ -244,7 +244,7 @@ type StopCommand struct {
 // SetTargetCommand asks the robot to move to an explicit pose.
 type SetTargetCommand struct {
 	CommandEnvelope
-	Pos Pos `json:"pos"`
+	Pose Pose `json:"pose"`
 }
 
 // SetPoseCommand provides an authoritative pose fix, usually after manual
