@@ -15,7 +15,8 @@ import (
 	"syscall"
 	"time"
 
-	gametypes "checkerbots/apps/server/game-types"
+	gameengine "checkerbots/apps/server/game-engine"
+	"checkerbots/apps/server/simulator"
 )
 
 //go:embed static/* templates/*
@@ -38,10 +39,10 @@ type AppSnapshot struct {
 
 // RobotSnapshot is the serializable form of a single robot's state.
 type RobotSnapshot struct {
-	ID        RobotID           `json:"id"`
-	PieceID   gametypes.PieceID `json:"piece_id"`
-	Pose      Pose              `json:"pose"`
-	UpdatedAt time.Time         `json:"updated_at"`
+	ID        RobotID            `json:"id"`
+	PieceID   gameengine.PieceID `json:"piece_id"`
+	Pose      Pose               `json:"pose"`
+	UpdatedAt time.Time          `json:"updated_at"`
 }
 
 // GameSnapshot carries the board and game state delivered to the frontend.
@@ -54,12 +55,12 @@ type RobotSnapshot struct {
 // (on-board or captured) all share the same Row/Col position fields, with
 // their extended-grid position already resolved server-side.
 type GameSnapshot struct {
-	Turn              string                                   `json:"turn"`
-	GameOver          *gameOverResponse                        `json:"gameOver"`
-	BoardSize         int                                      `json:"boardSize"`
-	CaptureColumns    int                                      `json:"captureColumns"`
-	Pieces            []gamePiece                              `json:"pieces"`
-	LegalMovesByPiece map[gametypes.PieceID][]legalMoveSummary `json:"legalMovesByPiece"`
+	Turn              string                                    `json:"turn"`
+	GameOver          *gameOverResponse                         `json:"gameOver"`
+	BoardSize         int                                       `json:"boardSize"`
+	CaptureColumns    int                                       `json:"captureColumns"`
+	Pieces            []gamePiece                               `json:"pieces"`
+	LegalMovesByPiece map[gameengine.PieceID][]legalMoveSummary `json:"legalMovesByPiece"`
 }
 
 type gameOverResponse struct {
@@ -87,12 +88,12 @@ type applyMoveRequest struct {
 // currently on the board or set aside as captured - both share the same
 // Row/Col position fields, using the extended grid described on GameSnapshot.
 type gamePiece struct {
-	ID      gametypes.PieceID `json:"id"`
-	Side    string            `json:"side"`
-	Kind    string            `json:"kind"`
-	Classes string            `json:"classes"`
-	Row     int               `json:"row"`
-	Col     int               `json:"col"`
+	ID      gameengine.PieceID `json:"id"`
+	Side    string             `json:"side"`
+	Kind    string             `json:"kind"`
+	Classes string             `json:"classes"`
+	Row     int                `json:"row"`
+	Col     int                `json:"col"`
 }
 
 type errorResponse struct {
@@ -125,20 +126,42 @@ func main() {
 		statePath = path.Join(tmpDir, "checkerbots.gob")
 	}
 
-	initial, err := loadState(statePath)
+	state, err := loadState(statePath)
 	if err != nil {
 		log.Printf("failed to load state: %v; using default state", err)
-		initial = makeInitialStoredState()
+		state = makeInitialState()
 	}
+
+	fleetController := simulator.NewSimulator(len(state.Game.Pieces))
+	go fleetController.Run(
+		context.Background(), state.fleetCmdChan, state.fleetEventChan,
+	)
 
 	h := newSseHub()
 	go h.run()
 
+	// wsCtrl handles WebSocket connections from external robots and simulators.
+	// Set FLEET_CONTROLLER=ws to use it as the fleet controller instead of the
+	// in-process simulator. Robot piece assignments are not automatically
+	// populated in WS mode; robots must connect and be assigned externally.
+	// 	wsCtrl := wscontroller.NewController()
+	//
+	// 	var fleetCtrl fleetapi.FleetController
+	// 	if os.Getenv("FLEET_CONTROLLER") == "ws" {
+	// 		log.Printf("fleet controller: WebSocket (robots connect at /api/robots/ws)")
+	// 		// Clear stale robot state; WS robots re-register on connect.
+	// 		state.Robots = make(map[RobotID]robotInfo)
+	// 		fleetCtrl = wsCtrl
+	// 	} else {
+	// 		log.Printf("fleet controller: in-process simulator")
+	// 	}
+
 	mgr := newStateManager()
-	go mgr.run(initial, h.broadcast)
+	go mgr.run(&state, h.broadcast)
 
 	mux := http.NewServeMux()
 	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticFS))))
+	// mux.Handle("/api/robots/ws", wsCtrl)
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
@@ -179,9 +202,9 @@ func main() {
 			writeJSONError(w, http.StatusBadRequest, "bad_request", "move path must contain at least 2 positions")
 			return
 		}
-		move := make(gametypes.Move, len(req.Path))
+		move := make(gameengine.Move, len(req.Path))
 		for i, p := range req.Path {
-			move[i] = gametypes.Position{Row: p.Row, Col: p.Col}
+			move[i] = gameengine.Position{Row: p.Row, Col: p.Col}
 		}
 		if err := mgr.applyMove(move); err != nil {
 			writeJSONError(w, http.StatusConflict, "illegal_move", err.Reason)
@@ -305,11 +328,11 @@ func buildRobotSnapshot(state *appState, id RobotID) RobotSnapshot {
 	}
 }
 
-func buildGameSnapshot(game *gametypes.Game) GameSnapshot {
+func buildGameSnapshot(game *gameengine.Game) GameSnapshot {
 	// activeByPosition only holds non-captured pieces: captured pieces have no
-	// legal moves, and gametypes already gives them an extended-grid Position
+	// legal moves, and gameengine already gives them an extended-grid Position
 	// (in the capture columns) that's disjoint from any real board position.
-	activeByPosition := make(map[gametypes.Position]gametypes.Piece, len(game.Pieces))
+	activeByPosition := make(map[gameengine.Position]gameengine.Piece, len(game.Pieces))
 	pieces := make([]gamePiece, 0, len(game.Pieces))
 	for _, piece := range game.Pieces {
 		if !piece.Captured {
@@ -325,8 +348,8 @@ func buildGameSnapshot(game *gametypes.Game) GameSnapshot {
 		})
 	}
 
-	legalMovesByPiece := make(map[gametypes.PieceID][]legalMoveSummary)
-	for _, move := range game.LegalMoves {
+	legalMovesByPiece := make(map[gameengine.PieceID][]legalMoveSummary)
+	for _, move := range game.GetLegalMoves() {
 		if len(move) < 2 {
 			continue
 		}
@@ -342,10 +365,10 @@ func buildGameSnapshot(game *gametypes.Game) GameSnapshot {
 	}
 
 	var gameOver *gameOverResponse
-	if game.GameOver != nil {
+	if game.Result != nil {
 		gameOver = &gameOverResponse{
-			Winner: titleCaseTurn(game.GameOver.Winner),
-			Reason: game.GameOver.Reason,
+			Winner: titleCaseTurn(game.Result.Winner),
+			Reason: game.Result.Reason,
 		}
 	}
 
@@ -359,16 +382,16 @@ func buildGameSnapshot(game *gametypes.Game) GameSnapshot {
 	}
 }
 
-func pieceClasses(piece gametypes.Piece) string {
+func pieceClasses(piece gameengine.Piece) string {
 	classes := "piece piece--" + string(piece.Side)
-	if piece.Kind == gametypes.PieceKindKing {
+	if piece.Kind == gameengine.PieceKindKing {
 		classes += " piece--king"
 	}
 	return classes
 }
 
-func titleCaseTurn(side gametypes.PlayerSide) string {
-	if side == gametypes.PlayerSideBlack {
+func titleCaseTurn(side gameengine.PlayerSide) string {
+	if side == gameengine.PlayerSideBlack {
 		return "Black"
 	}
 	return "Red"

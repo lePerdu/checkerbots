@@ -5,8 +5,8 @@ import "testing"
 func TestNewGameReturnsStandardStartingBoard(t *testing.T) {
 	game := NewGame8x8()
 
-	if game.GameOver != nil {
-		t.Fatalf("expected nil GameOver, got %#v", game.GameOver)
+	if game.Result != nil {
+		t.Fatalf("expected nil GameOver, got %#v", game.Result)
 	}
 
 	if game.Turn != PlayerSideBlack {
@@ -21,8 +21,8 @@ func TestNewGameReturnsStandardStartingBoard(t *testing.T) {
 		t.Fatalf("expected empty move history, got %d entries", len(game.MoveHistory))
 	}
 
-	if len(game.LegalMoves) != 7 {
-		t.Fatalf("expected 7 opening legal moves, got %d", len(game.LegalMoves))
+	if len(game.legalMoves) != 7 {
+		t.Fatalf("expected 7 opening legal moves, got %d", len(game.legalMoves))
 	}
 
 	if len(game.Pieces) != 24 {
@@ -118,7 +118,7 @@ func TestNewGameReturnsStandardStartingBoard(t *testing.T) {
 
 func TestGetLegalMovesReturnsSimpleOpeningMovesForBlack(t *testing.T) {
 	game := NewGame8x8()
-	moves := game.LegalMoves
+	moves := game.legalMoves
 
 	expected := []Move{
 		{{Row: 2, Col: 0}, {Row: 3, Col: 1}},
@@ -136,7 +136,7 @@ func TestGetLegalMovesReturnsSimpleOpeningMovesForBlack(t *testing.T) {
 func TestGetLegalMovesReturnsSimpleMovesForRedTurn(t *testing.T) {
 	game := NewGame8x8()
 	game.Turn = PlayerSideRed
-	computeLegalMoves(&game)
+	game.computeLegalMoves()
 
 	expected := []Move{
 		{{Row: 5, Col: 1}, {Row: 4, Col: 0}},
@@ -148,11 +148,11 @@ func TestGetLegalMovesReturnsSimpleMovesForRedTurn(t *testing.T) {
 		{{Row: 5, Col: 7}, {Row: 4, Col: 6}},
 	}
 
-	assertMovesEqual(t, game.LegalMoves, expected)
+	assertMovesEqual(t, game.legalMoves, expected)
 }
 
 func TestGetLegalMovesSkipsBlockedAndCapturedPieces(t *testing.T) {
-	game := GameFromStored(StoredGame{
+	game := Game{
 		Turn:      PlayerSideBlack,
 		BoardSize: 8,
 		Pieces: []Piece{
@@ -162,8 +162,10 @@ func TestGetLegalMovesSkipsBlockedAndCapturedPieces(t *testing.T) {
 			{ID: "red-2", Side: PlayerSideRed, Kind: PieceKindMan, Position: Position{Row: 3, Col: 3}},
 		},
 		MoveHistory: []Move{},
-	})
-	moves := game.LegalMoves
+	}
+	game.computeLegalMoves()
+
+	moves := game.legalMoves
 	expected := []Move{
 		{{Row: 2, Col: 2}, {Row: 4, Col: 0}},
 		{{Row: 2, Col: 2}, {Row: 4, Col: 4}},
@@ -173,15 +175,16 @@ func TestGetLegalMovesSkipsBlockedAndCapturedPieces(t *testing.T) {
 }
 
 func TestGetLegalMovesIncludesBackwardMovesForKings(t *testing.T) {
-	game := GameFromStored(StoredGame{
+	game := Game{
 		Turn:      PlayerSideBlack,
 		BoardSize: 8,
 		Pieces: []Piece{
 			{ID: "black-king-1", Side: PlayerSideBlack, Kind: PieceKindKing, Position: Position{Row: 3, Col: 3}},
 		},
 		MoveHistory: []Move{},
-	})
-	moves := game.LegalMoves
+	}
+	game.computeLegalMoves()
+	moves := game.legalMoves
 
 	expected := []Move{
 		{{Row: 3, Col: 3}, {Row: 2, Col: 2}},
@@ -197,7 +200,7 @@ func TestApplyMoveMovesPieceAndAdvancesTurn(t *testing.T) {
 	game := NewGame8x8()
 	move := Move{{Row: 2, Col: 0}, {Row: 3, Col: 1}}
 
-	err := ApplyMove(&game, move)
+	err := game.ApplyMove(move)
 	if err != nil {
 		t.Fatalf("expected move to be applied, got error: %v", err)
 	}
@@ -210,7 +213,7 @@ func TestApplyMoveMovesPieceAndAdvancesTurn(t *testing.T) {
 		t.Fatalf("expected 1 move in history, got %d", len(game.MoveHistory))
 	}
 
-	if len(game.LegalMoves) == 0 {
+	if len(game.legalMoves) == 0 {
 		t.Fatalf("expected legal moves to be recomputed after move")
 	}
 
@@ -247,7 +250,7 @@ func TestApplyMoveMovesPieceAndAdvancesTurn(t *testing.T) {
 }
 
 func TestApplyMoveCapturesOpponentPiece(t *testing.T) {
-	game := GameFromStored(StoredGame{
+	game := Game{
 		Turn:           PlayerSideBlack,
 		BoardSize:      8,
 		CaptureColumns: 2,
@@ -256,10 +259,11 @@ func TestApplyMoveCapturesOpponentPiece(t *testing.T) {
 			{ID: "red-1", Side: PlayerSideRed, Kind: PieceKindMan, Position: Position{Row: 3, Col: 1}},
 		},
 		MoveHistory: []Move{},
-	})
+	}
+	game.computeLegalMoves()
 	move := Move{{Row: 2, Col: 0}, {Row: 4, Col: 2}}
 
-	err := ApplyMove(&game, move)
+	err := game.ApplyMove(move)
 	if err != nil {
 		t.Fatalf("expected capture move to be applied, got error: %v", err)
 	}
@@ -301,7 +305,7 @@ func TestApplyMoveCapturesOpponentPiece(t *testing.T) {
 }
 
 func TestGetLegalMovesPrefersJumpsOverSimpleMoves(t *testing.T) {
-	game := GameFromStored(StoredGame{
+	game := Game{
 		Turn:      PlayerSideBlack,
 		BoardSize: 8,
 		Pieces: []Piece{
@@ -310,26 +314,28 @@ func TestGetLegalMovesPrefersJumpsOverSimpleMoves(t *testing.T) {
 			{ID: "red-1", Side: PlayerSideRed, Kind: PieceKindMan, Position: Position{Row: 3, Col: 3}},
 		},
 		MoveHistory: []Move{},
-	})
+	}
+	game.computeLegalMoves()
 	expected := []Move{
 		{{Row: 2, Col: 2}, {Row: 4, Col: 4}},
 	}
 
-	assertMovesEqual(t, game.LegalMoves, expected)
+	assertMovesEqual(t, game.legalMoves, expected)
 }
 
 func TestApplyMoveRejectsJumpWithoutPieceToCapture(t *testing.T) {
-	game := GameFromStored(StoredGame{
+	game := Game{
 		Turn:      PlayerSideBlack,
 		BoardSize: 8,
 		Pieces: []Piece{
 			{ID: "black-1", Side: PlayerSideBlack, Kind: PieceKindMan, Position: Position{Row: 2, Col: 0}},
 		},
 		MoveHistory: []Move{},
-	})
+	}
+	game.computeLegalMoves()
 	move := Move{{Row: 2, Col: 0}, {Row: 4, Col: 2}}
 
-	err := ApplyMove(&game, move)
+	err := game.ApplyMove(move)
 	if err == nil {
 		t.Fatalf("expected jump without captured piece to be rejected")
 	}
@@ -339,7 +345,7 @@ func TestApplyMoveRejectsJumpWithoutPieceToCapture(t *testing.T) {
 }
 
 func TestApplyMoveRejectsJumpOverOwnPiece(t *testing.T) {
-	game := GameFromStored(StoredGame{
+	game := Game{
 		Turn:      PlayerSideBlack,
 		BoardSize: 8,
 		Pieces: []Piece{
@@ -347,10 +353,11 @@ func TestApplyMoveRejectsJumpOverOwnPiece(t *testing.T) {
 			{ID: "black-2", Side: PlayerSideBlack, Kind: PieceKindMan, Position: Position{Row: 3, Col: 1}},
 		},
 		MoveHistory: []Move{},
-	})
+	}
+	game.computeLegalMoves()
 	move := Move{{Row: 2, Col: 0}, {Row: 4, Col: 2}}
 
-	err := ApplyMove(&game, move)
+	err := game.ApplyMove(move)
 	if err == nil {
 		t.Fatalf("expected jump over own piece to be rejected")
 	}
@@ -363,7 +370,7 @@ func TestApplyMoveRejectsInvalidMove(t *testing.T) {
 	game := NewGame8x8()
 	move := Move{{Row: 0, Col: 0}, {Row: 1, Col: 1}}
 
-	err := ApplyMove(&game, move)
+	err := game.ApplyMove(move)
 	if err == nil {
 		t.Fatalf("expected invalid move to be rejected")
 	}
@@ -387,7 +394,7 @@ func TestApplyMoveRejectsInvalidMove(t *testing.T) {
 }
 
 func TestGetLegalMovesFindsMultiStepJumpSequence(t *testing.T) {
-	game := GameFromStored(StoredGame{
+	game := Game{
 		Turn:      PlayerSideBlack,
 		BoardSize: 8,
 		Pieces: []Piece{
@@ -396,18 +403,19 @@ func TestGetLegalMovesFindsMultiStepJumpSequence(t *testing.T) {
 			{ID: "red-2", Side: PlayerSideRed, Kind: PieceKindMan, Position: Position{Row: 3, Col: 3}},
 		},
 		MoveHistory: []Move{},
-	})
+	}
+	game.computeLegalMoves()
 	expected := []Move{
 		{{Row: 0, Col: 2}, {Row: 2, Col: 4}, {Row: 4, Col: 2}},
 	}
 
-	assertMovesEqual(t, game.LegalMoves, expected)
+	assertMovesEqual(t, game.legalMoves, expected)
 }
 
 func TestGetLegalMovesKingCannotJumpSamePieceTwice(t *testing.T) {
 	// The king could otherwise hop back and forth over the single red piece
 	// forever; it must only be allowed to capture it once.
-	game := GameFromStored(StoredGame{
+	game := Game{
 		Turn:      PlayerSideBlack,
 		BoardSize: 8,
 		Pieces: []Piece{
@@ -415,18 +423,19 @@ func TestGetLegalMovesKingCannotJumpSamePieceTwice(t *testing.T) {
 			{ID: "red-1", Side: PlayerSideRed, Kind: PieceKindMan, Position: Position{Row: 3, Col: 3}},
 		},
 		MoveHistory: []Move{},
-	})
+	}
+	game.computeLegalMoves()
 	expected := []Move{
 		{{Row: 2, Col: 2}, {Row: 4, Col: 4}},
 	}
 
-	assertMovesEqual(t, game.LegalMoves, expected)
+	assertMovesEqual(t, game.legalMoves, expected)
 }
 
 func TestGetLegalMovesJumpSequenceEndsWhenPieceIsPromoted(t *testing.T) {
 	// black-1 can jump to row 7 (its promotion row) and would have another
 	// jump available from there, but becoming a king must end the sequence.
-	game := GameFromStored(StoredGame{
+	game := Game{
 		Turn:      PlayerSideBlack,
 		BoardSize: 8,
 		Pieces: []Piece{
@@ -435,18 +444,19 @@ func TestGetLegalMovesJumpSequenceEndsWhenPieceIsPromoted(t *testing.T) {
 			{ID: "red-2", Side: PlayerSideRed, Kind: PieceKindMan, Position: Position{Row: 6, Col: 6}},
 		},
 		MoveHistory: []Move{},
-	})
+	}
+	game.computeLegalMoves()
 	expected := []Move{
 		{{Row: 5, Col: 3}, {Row: 7, Col: 5}},
 	}
 
-	assertMovesEqual(t, game.LegalMoves, expected)
+	assertMovesEqual(t, game.legalMoves, expected)
 }
 
 func TestGetLegalMovesKingContinuesJumpingPastPromotionRow(t *testing.T) {
 	// black-king is already a king, so landing on row 7 (black's promotion
 	// row) doesn't stop it from continuing the jump sequence.
-	game := GameFromStored(StoredGame{
+	game := Game{
 		Turn:      PlayerSideBlack,
 		BoardSize: 8,
 		Pieces: []Piece{
@@ -455,18 +465,19 @@ func TestGetLegalMovesKingContinuesJumpingPastPromotionRow(t *testing.T) {
 			{ID: "red-2", Side: PlayerSideRed, Kind: PieceKindMan, Position: Position{Row: 6, Col: 6}},
 		},
 		MoveHistory: []Move{},
-	})
+	}
+	game.computeLegalMoves()
 	expected := []Move{
 		{{Row: 5, Col: 3}, {Row: 7, Col: 5}, {Row: 5, Col: 7}},
 	}
 
-	assertMovesEqual(t, game.LegalMoves, expected)
+	assertMovesEqual(t, game.legalMoves, expected)
 }
 
 func TestGetLegalMovesAllowsDifferentLengthJumpSequencesSimultaneously(t *testing.T) {
 	// black-1 has only a single jump available, while black-2 has a
 	// two-step jump sequence available; both should be legal moves.
-	game := GameFromStored(StoredGame{
+	game := Game{
 		Turn:      PlayerSideBlack,
 		BoardSize: 8,
 		Pieces: []Piece{
@@ -478,17 +489,18 @@ func TestGetLegalMovesAllowsDifferentLengthJumpSequencesSimultaneously(t *testin
 			{ID: "red-3", Side: PlayerSideRed, Kind: PieceKindMan, Position: Position{Row: 3, Col: 5}},
 		},
 		MoveHistory: []Move{},
-	})
+	}
+	game.computeLegalMoves()
 	expected := []Move{
 		{{Row: 0, Col: 0}, {Row: 2, Col: 2}},
 		{{Row: 0, Col: 4}, {Row: 2, Col: 6}, {Row: 4, Col: 4}},
 	}
 
-	assertMovesEqual(t, game.LegalMoves, expected)
+	assertMovesEqual(t, game.legalMoves, expected)
 }
 
 func TestApplyMoveAppliesMultiStepJumpSequence(t *testing.T) {
-	game := GameFromStored(StoredGame{
+	game := Game{
 		Turn:           PlayerSideBlack,
 		BoardSize:      8,
 		CaptureColumns: 2,
@@ -498,10 +510,11 @@ func TestApplyMoveAppliesMultiStepJumpSequence(t *testing.T) {
 			{ID: "red-2", Side: PlayerSideRed, Kind: PieceKindMan, Position: Position{Row: 3, Col: 3}},
 		},
 		MoveHistory: []Move{},
-	})
+	}
+	game.computeLegalMoves()
 	move := Move{{Row: 0, Col: 2}, {Row: 2, Col: 4}, {Row: 4, Col: 2}}
 
-	err := ApplyMove(&game, move)
+	err := game.ApplyMove(move)
 	if err != nil {
 		t.Fatalf("expected multi-step jump to be applied, got error: %v", err)
 	}
@@ -543,7 +556,7 @@ func TestApplyMoveAppliesMultiStepJumpSequence(t *testing.T) {
 }
 
 func TestApplyMoveRejectsMultiStepMoveNotInLegalMoves(t *testing.T) {
-	game := GameFromStored(StoredGame{
+	game := Game{
 		Turn:      PlayerSideBlack,
 		BoardSize: 8,
 		Pieces: []Piece{
@@ -552,11 +565,12 @@ func TestApplyMoveRejectsMultiStepMoveNotInLegalMoves(t *testing.T) {
 			{ID: "red-2", Side: PlayerSideRed, Kind: PieceKindMan, Position: Position{Row: 3, Col: 3}},
 		},
 		MoveHistory: []Move{},
-	})
+	}
+	game.computeLegalMoves()
 	// Only one destination is reachable after landing at (2,4); (4,6) is not.
 	move := Move{{Row: 0, Col: 2}, {Row: 2, Col: 4}, {Row: 4, Col: 6}}
 
-	err := ApplyMove(&game, move)
+	err := game.ApplyMove(move)
 	if err == nil {
 		t.Fatalf("expected illegal multi-step move to be rejected")
 	}
@@ -566,7 +580,7 @@ func TestApplyMoveRejectsMultiStepMoveNotInLegalMoves(t *testing.T) {
 }
 
 func TestCapturedPiecesAreTrackedIndependentlyPerSideAcrossMoves(t *testing.T) {
-	game := GameFromStored(StoredGame{
+	game := Game{
 		Turn:           PlayerSideBlack,
 		BoardSize:      8,
 		CaptureColumns: 2,
@@ -577,12 +591,13 @@ func TestCapturedPiecesAreTrackedIndependentlyPerSideAcrossMoves(t *testing.T) {
 			{ID: "red-2", Side: PlayerSideRed, Kind: PieceKindMan, Position: Position{Row: 5, Col: 5}},
 		},
 		MoveHistory: []Move{},
-	})
+	}
+	game.computeLegalMoves()
 
-	if err := ApplyMove(&game, Move{{Row: 2, Col: 0}, {Row: 4, Col: 2}}); err != nil {
+	if err := game.ApplyMove(Move{{Row: 2, Col: 0}, {Row: 4, Col: 2}}); err != nil {
 		t.Fatalf("expected black capture to be applied, got error: %v", err)
 	}
-	if err := ApplyMove(&game, Move{{Row: 5, Col: 5}, {Row: 3, Col: 3}}); err != nil {
+	if err := game.ApplyMove(Move{{Row: 5, Col: 5}, {Row: 3, Col: 3}}); err != nil {
 		t.Fatalf("expected red capture to be applied, got error: %v", err)
 	}
 
@@ -600,51 +615,6 @@ func TestCapturedPiecesAreTrackedIndependentlyPerSideAcrossMoves(t *testing.T) {
 		"black-2": {Row: 7, Col: -2},
 	}
 	for _, piece := range game.Pieces {
-		want, ok := wantPositions[piece.ID]
-		if !ok {
-			continue
-		}
-		if !piece.Captured {
-			t.Fatalf("expected piece %q to be captured", piece.ID)
-		}
-		if piece.Position != want {
-			t.Fatalf("expected captured piece %q at %+v, got %+v", piece.ID, want, piece.Position)
-		}
-	}
-}
-
-// The next captured piece's slot is derived by scanning Pieces (see
-// capturedCount), not from any persisted counter, so it must still be
-// correct for a game that's been saved and reloaded.
-func TestGameFromStoredPreservesCapturedPiecePositionsAcrossReload(t *testing.T) {
-	game := GameFromStored(StoredGame{
-		Turn:           PlayerSideBlack,
-		BoardSize:      8,
-		CaptureColumns: 2,
-		Pieces: []Piece{
-			{ID: "black-1", Side: PlayerSideBlack, Kind: PieceKindMan, Position: Position{Row: 2, Col: 0}},
-			{ID: "black-2", Side: PlayerSideBlack, Kind: PieceKindMan, Position: Position{Row: 4, Col: 4}},
-			{ID: "red-1", Side: PlayerSideRed, Kind: PieceKindMan, Position: Position{Row: 3, Col: 1}},
-			{ID: "red-2", Side: PlayerSideRed, Kind: PieceKindMan, Position: Position{Row: 5, Col: 5}},
-		},
-		MoveHistory: []Move{},
-	})
-
-	if err := ApplyMove(&game, Move{{Row: 2, Col: 0}, {Row: 4, Col: 2}}); err != nil {
-		t.Fatalf("expected black capture to be applied, got error: %v", err)
-	}
-
-	reloaded := GameFromStored(game.ToStored())
-
-	if err := ApplyMove(&reloaded, Move{{Row: 5, Col: 5}, {Row: 3, Col: 3}}); err != nil {
-		t.Fatalf("expected red capture to be applied after reload, got error: %v", err)
-	}
-
-	wantPositions := map[PieceID]Position{
-		"red-1":   {Row: 0, Col: 9},
-		"black-2": {Row: 7, Col: -2},
-	}
-	for _, piece := range reloaded.Pieces {
 		want, ok := wantPositions[piece.ID]
 		if !ok {
 			continue

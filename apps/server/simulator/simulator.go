@@ -17,7 +17,7 @@ type ring[T any] struct {
 	off, len int
 }
 
-func NewRing[T any](cap int) ring[T] {
+func MakeRing[T any](cap int) ring[T] {
 	return ring[T]{
 		items: make([]T, cap),
 	}
@@ -74,14 +74,14 @@ func (r *ring[T]) PopFront() (item T, ok bool) {
 }
 
 type SimState struct {
-	Entities            []Entity
-	EntityIDByRobotID   map[fleetapi.RobotID]EntityID
-	updateRequiredQueue ring[EntityID]
+	entities            []entity
+	entityIDByRobotID   map[fleetapi.RobotID]entityID
+	updateRequiredQueue ring[entityID]
 }
 
-type EntityID int
+type entityID int
 
-type Pose struct {
+type entityPose struct {
 	Pos vec.V2
 	// Heading is the facing direction in radians.
 	// 0 points from the black side toward the red side (+Y). Preserved from the
@@ -89,14 +89,14 @@ type Pose struct {
 	Heading float64
 }
 
-func poseFromFleetPose(pose fleetapi.Pose) Pose {
-	return Pose{
+func poseFromFleetPose(pose fleetapi.Pose) entityPose {
+	return entityPose{
 		Pos:     vec.V2{X: pose.XMM, Y: pose.YMM}.Scale(1.0 / 1000.0),
 		Heading: pose.HeadingRad,
 	}
 }
 
-func poseToFleetPose(pose Pose) fleetapi.Pose {
+func poseToFleetPose(pose entityPose) fleetapi.Pose {
 	return fleetapi.Pose{
 		XMM:        pose.Pos.X * 1000.0,
 		YMM:        pose.Pos.Y * 1000.0,
@@ -104,14 +104,13 @@ func poseToFleetPose(pose Pose) fleetapi.Pose {
 	}
 }
 
-type Entity struct {
-	ID            EntityID
-	RobotID       fleetapi.RobotID
-	Pose          Pose
-	TargetPose    Pose
-	reachedTarget bool
-	// Whether the latest entity state has been published to the update channel
-	needsUpdateQueued bool
+type entity struct {
+	id              entityID
+	robotID         fleetapi.RobotID
+	pose            entityPose
+	targetPose      entityPose
+	reachedTarget   bool
+	hasUpdateQueued bool
 }
 
 const ENTITY_RADIUS = 0.34 / 2.0
@@ -122,39 +121,51 @@ const ROBOT_MAX_ANGULAR_SPEED = math.Pi / 2.0
 const ROBOT_ANGLE_TOLERANCE = math.Pi / 180.0
 const SIM_TIME_STEP = time.Second / 30.0
 
-func NewSimulator() SimState {
-	return SimState{
-		EntityIDByRobotID: make(map[fleetapi.RobotID]EntityID),
+func NewSimulator(numRobots int) *SimState {
+	state := &SimState{
+		entityIDByRobotID:   make(map[fleetapi.RobotID]entityID),
+		entities:            make([]entity, 0, numRobots),
+		updateRequiredQueue: MakeRing[entityID](numRobots),
 	}
+	for range numRobots {
+		state.addRobot(fleetapi.Pose{})
+	}
+	return state
 }
 
-func (s *SimState) AddRobot(initialPose fleetapi.Pose) fleetapi.RobotID {
-	entityID := EntityID(len(s.Entities))
+func (s *SimState) addRobot(initialPose fleetapi.Pose) fleetapi.RobotID {
+	entityID := entityID(len(s.entities))
 	robotID := fleetapi.RobotID("r" + strconv.Itoa(int(entityID)))
-	s.Entities = append(s.Entities, Entity{
-		ID:      entityID,
-		RobotID: robotID,
-		Pose:    poseFromFleetPose(initialPose),
+	s.entities = append(s.entities, entity{
+		id:            entityID,
+		robotID:       robotID,
+		pose:          poseFromFleetPose(initialPose),
+		targetPose:    poseFromFleetPose(initialPose),
+		reachedTarget: true,
 	})
-	s.EntityIDByRobotID[robotID] = entityID
+	s.entityIDByRobotID[robotID] = entityID
 	return robotID
 }
 
-type EntityUpdate struct {
-	fleetapi.RobotUpdate
-	EntityID EntityID
+type entityUpdate struct {
+	fleetapi.PoseUpdateEvent
+	entityID entityID
 }
 
 func (s *SimState) Run(
 	ctx context.Context,
-	cmdChan <-chan fleetapi.RobotCommand,
-	updateChan chan<- fleetapi.RobotUpdate,
+	cmdChan <-chan fleetapi.Command,
+	eventChan chan<- fleetapi.Event,
 ) {
-	s.updateRequiredQueue = NewRing[EntityID](len(s.Entities))
-	for id := range s.Entities {
-		s.Entities[id].needsUpdateQueued = false
-		s.updateRequiredQueue.PushBack(EntityID(id))
-	}
+	// Simple way to send connected events concurrently with receiving commands
+	// These events don't need to be synchronized, since:
+	// - Commands for individual robots won't arrive until after connected message is processed
+	// - Updates for individual robots won't be sent until commands are processed
+	go func() {
+		for _, entity := range s.entities {
+			eventChan <- fleetapi.RobotConnectedEvent{RobotID: entity.robotID}
+		}
+	}()
 
 	ticker := time.NewTicker(SIM_TIME_STEP)
 	defer ticker.Stop()
@@ -162,20 +173,20 @@ func (s *SimState) Run(
 	lastUpdate := time.Now()
 
 	entityUpdatePending := false
-	var nextEntityUpdate fleetapi.RobotUpdate
+	var nextEntityUpdate fleetapi.PoseUpdateEvent
 
 	for {
 		if !entityUpdatePending && s.updateRequiredQueue.Len() > 0 {
 			entityID, _ := s.updateRequiredQueue.PopFront()
 			nextEntityUpdate = s.makeRobotUpdate(entityID)
-			s.Entities[entityID].needsUpdateQueued = true
+			s.entities[entityID].hasUpdateQueued = false
 			entityUpdatePending = true
 		}
 
 		// Make this nil so that it will be skipped in the select if no update is pending
-		var optUpdateChan chan<- fleetapi.RobotUpdate
+		var optEventChan chan<- fleetapi.Event
 		if entityUpdatePending {
-			optUpdateChan = updateChan
+			optEventChan = eventChan
 		}
 
 		select {
@@ -188,7 +199,7 @@ func (s *SimState) Run(
 				return
 			}
 			s.handleCommand(cmd)
-		case optUpdateChan <- nextEntityUpdate:
+		case optEventChan <- nextEntityUpdate:
 			entityUpdatePending = false
 		case <-ctx.Done():
 			return
@@ -196,22 +207,42 @@ func (s *SimState) Run(
 	}
 }
 
-func (s *SimState) handleCommand(cmd fleetapi.RobotCommand) {
-	entity_id, exists := s.EntityIDByRobotID[cmd.RobotID]
-	if !exists {
-		log.Panic("sim: unknown robot ID:", cmd.RobotID)
+func (s *SimState) handleCommand(cmd fleetapi.Command) {
+	switch cmd := cmd.(type) {
+	case fleetapi.SetPoseCommand:
+		entityID, exists := s.entityIDByRobotID[cmd.RobotID]
+		if !exists {
+			log.Panic("sim: unknown robot ID:", cmd.RobotID)
+		}
+		entity := &s.entities[entityID]
+		// Manual pose setting shouldn't happen often, so don't bother diffing the pose
+		entity.pose = poseFromFleetPose(cmd.CurrentPose)
+		s.handleEntityUpdated(entity)
+	case fleetapi.SetTargetCommand:
+		entityID, exists := s.entityIDByRobotID[cmd.RobotID]
+		if !exists {
+			log.Panic("sim: unknown robot ID:", cmd.RobotID)
+		}
+		s.entities[entityID].targetPose = poseFromFleetPose(cmd.TargetPose)
+	default:
+		log.Panic("Unknown command type:", cmd)
 	}
-	s.Entities[entity_id].TargetPose = poseFromFleetPose(cmd.TargetPose)
+}
+
+func (s *SimState) handleEntityUpdated(entity *entity) {
+	if !entity.hasUpdateQueued {
+		s.updateRequiredQueue.PushBack(entity.id)
+		entity.hasUpdateQueued = true
+	}
 }
 
 func (s *SimState) step(dt time.Duration) {
-	for entityID := range s.Entities {
-		entity := &s.Entities[entityID]
-		prevPose := entity.Pose
+	for entityID := range s.entities {
+		entity := &s.entities[entityID]
+		prevPose := entity.pose
 		entity.step(dt)
-		if prevPose != entity.Pose && entity.needsUpdateQueued {
-			entity.needsUpdateQueued = false
-			s.updateRequiredQueue.PushBack(entity.ID)
+		if prevPose != entity.pose {
+			s.handleEntityUpdated(entity)
 		}
 	}
 	s.resolveEntityCollisions()
@@ -221,12 +252,12 @@ func (s *SimState) resolveEntityCollisions() {
 	minDist := ENTITY_RADIUS * 2.0
 	minDist2 := minDist * minDist
 
-	for i := range s.Entities {
-		for j := i + 1; j < len(s.Entities); j++ {
-			a := &s.Entities[i]
-			b := &s.Entities[j]
+	for i := range s.entities {
+		for j := i + 1; j < len(s.entities); j++ {
+			a := &s.entities[i]
+			b := &s.entities[j]
 
-			delta := b.Pose.Pos.Sub(a.Pose.Pos)
+			delta := b.pose.Pos.Sub(a.pose.Pos)
 			dist2 := delta.Length2()
 			if dist2 >= minDist2 {
 				continue
@@ -240,43 +271,37 @@ func (s *SimState) resolveEntityCollisions() {
 			}
 
 			correction := normal.Scale((minDist - dist) / 2.0)
-			a.Pose.Pos = a.Pose.Pos.Sub(correction)
-			b.Pose.Pos = b.Pose.Pos.Add(correction)
+			a.pose.Pos = a.pose.Pos.Sub(correction)
+			b.pose.Pos = b.pose.Pos.Add(correction)
 
-			if a.needsUpdateQueued {
-				a.needsUpdateQueued = false
-				s.updateRequiredQueue.PushBack(a.ID)
-			}
-			if b.needsUpdateQueued {
-				b.needsUpdateQueued = false
-				s.updateRequiredQueue.PushBack(b.ID)
-			}
+			s.handleEntityUpdated(a)
+			s.handleEntityUpdated(b)
 		}
 	}
 }
 
-func (s *SimState) makeRobotUpdate(id EntityID) fleetapi.RobotUpdate {
-	entity := s.Entities[id]
-	return fleetapi.RobotUpdate{
-		RobotID:     entity.RobotID,
-		CurrentPose: poseToFleetPose(entity.Pose),
+func (s *SimState) makeRobotUpdate(id entityID) fleetapi.PoseUpdateEvent {
+	entity := s.entities[id]
+	return fleetapi.PoseUpdateEvent{
+		RobotID:     entity.robotID,
+		CurrentPose: poseToFleetPose(entity.pose),
 	}
 }
 
-func (entity *Entity) step(dt time.Duration) {
+func (entity *entity) step(dt time.Duration) {
 	entity.stepCurved(dt)
 }
 
-func (entity *Entity) stepCurved(dt time.Duration) {
-	targetDelta := entity.TargetPose.Pos.Sub(entity.Pose.Pos)
+func (entity *entity) stepCurved(dt time.Duration) {
+	targetDelta := entity.targetPose.Pos.Sub(entity.pose.Pos)
 	targetDist := targetDelta.Length()
 	if targetDist < ROBOT_POS_TOLERANCE {
-		entity.stepHeading(entity.TargetPose.Heading, dt)
+		entity.stepHeading(entity.targetPose.Heading, dt)
 		return
 	}
 
 	headingToTargetPos := math.Atan2(targetDelta.X, targetDelta.Y)
-	deltaHeading := getHeadingDelta(headingToTargetPos - entity.Pose.Heading)
+	deltaHeading := getHeadingDelta(headingToTargetPos - entity.pose.Heading)
 	// Turn until facing the general direction
 	if math.Abs(deltaHeading) > math.Pi/6 {
 		entity.stepHeading(headingToTargetPos, dt)
@@ -292,7 +317,7 @@ func (entity *Entity) stepCurved(dt time.Duration) {
 		if stepDelta.Length() > targetDist {
 			stepDelta = targetDelta
 		}
-		entity.Pose.Pos = entity.Pose.Pos.Add(stepDelta)
+		entity.pose.Pos = entity.pose.Pos.Add(stepDelta)
 		return
 	}
 
@@ -321,21 +346,21 @@ func (entity *Entity) stepCurved(dt time.Duration) {
 
 	linearVel := vec.V2{
 		// sin/cos are flipped since heading is +Y->-X, not +X->+Y
-		X: math.Sin(entity.Pose.Heading),
-		Y: math.Cos(entity.Pose.Heading),
+		X: math.Sin(entity.pose.Heading),
+		Y: math.Cos(entity.pose.Heading),
 	}.Scale(linearSpeed)
 	angularVel := linearSpeed / radius
 
 	// TODO: Slow down as we approach the target
-	entity.Pose.Pos = entity.Pose.Pos.Add(linearVel.Scale(dt.Seconds()))
-	entity.Pose.Heading += angularVel * dt.Seconds()
+	entity.pose.Pos = entity.pose.Pos.Add(linearVel.Scale(dt.Seconds()))
+	entity.pose.Heading += angularVel * dt.Seconds()
 }
 
-func (entity *Entity) stepLinear(dt time.Duration) {
-	targetDelta := entity.TargetPose.Pos.Sub(entity.Pose.Pos)
+func (entity *entity) stepLinear(dt time.Duration) {
+	targetDelta := entity.targetPose.Pos.Sub(entity.pose.Pos)
 	targetDist := targetDelta.Length()
 	if targetDist < ROBOT_POS_TOLERANCE {
-		entity.stepHeading(entity.TargetPose.Heading, dt)
+		entity.stepHeading(entity.targetPose.Heading, dt)
 		return
 	}
 
@@ -351,18 +376,18 @@ func (entity *Entity) stepLinear(dt time.Duration) {
 	if stepDelta.Length() > targetDist {
 		stepDelta = targetDelta
 	}
-	entity.Pose.Pos = entity.Pose.Pos.Add(stepDelta)
+	entity.pose.Pos = entity.pose.Pos.Add(stepDelta)
 }
 
-func (entity *Entity) stepHeading(targetHeading float64, dt time.Duration) (done bool) {
-	headingDelta := getHeadingDelta(targetHeading - entity.Pose.Heading)
+func (entity *entity) stepHeading(targetHeading float64, dt time.Duration) (done bool) {
+	headingDelta := getHeadingDelta(targetHeading - entity.pose.Heading)
 	if math.Abs(headingDelta) < ROBOT_ANGLE_TOLERANCE {
 		return true
 	}
 
 	headingStepMag := min(ROBOT_MAX_ANGULAR_SPEED*dt.Seconds(), math.Abs(headingDelta))
 	headingStepDelta := math.Copysign(headingStepMag, headingDelta)
-	entity.Pose.Heading += headingStepDelta
+	entity.pose.Heading += headingStepDelta
 	return false
 }
 

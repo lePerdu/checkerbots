@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"encoding/gob"
 	"log"
 	"math"
@@ -9,8 +8,7 @@ import (
 	"time"
 
 	"checkerbots/apps/server/fleetapi"
-	"checkerbots/apps/server/simulator"
-	gameengine "checkerbots/apps/server/test-engine"
+	gameengine "checkerbots/apps/server/game-engine"
 )
 
 // appState is the authoritative server state, owned exclusively by the state manager goroutine.
@@ -18,24 +16,13 @@ type appState struct {
 	Version int64
 	Game    gameengine.Game
 	// Cache of robot state, separate from FleetController to avoid synchronization issues.
-	Robots          map[RobotID]robotInfo
-	Assignments     pieceAssignmentState
-	Planner         plannerState
-	FleetController fleetapi.FleetController
-	fleetCmdChan    chan fleetapi.RobotCommand
-	robotUpdateChan chan fleetapi.RobotUpdate
-	UpdatedAt       time.Time
-}
-
-// storedAppState is the disk-serializable form of appState.
-type storedAppState struct {
-	Version     int64
-	Game        gameengine.StoredGame
 	Robots      map[RobotID]robotInfo
 	Assignments pieceAssignmentState
 	Planner     plannerState
-	Simulator   simulator.SimState
 	UpdatedAt   time.Time
+
+	fleetCmdChan   chan fleetapi.Command
+	fleetEventChan chan fleetapi.Event
 }
 
 // robotInfo holds the live state of a physical robot reported by external systems.
@@ -82,10 +69,9 @@ type robotGoal struct {
 	// TOOD: Track updated time?
 }
 
-func makeInitialStoredState() (stored storedAppState) {
-	game := gameengine.NewGame8x8()
-	stored = storedAppState{
-		Game:   game.ToStored(),
+func makeInitialState() appState {
+	state := appState{
+		Game:   gameengine.NewGame8x8(),
 		Robots: make(map[RobotID]robotInfo),
 		Assignments: pieceAssignmentState{
 			RobotIDByPieceID: make(map[gameengine.PieceID]RobotID),
@@ -94,53 +80,32 @@ func makeInitialStoredState() (stored storedAppState) {
 		Planner: plannerState{
 			Goals: make(map[RobotID]robotGoal),
 		},
-		Simulator: simulator.NewSimulator(),
 		UpdatedAt: time.Now(),
 	}
+	state.hydrate()
+	return state
+}
 
-	for _, piece := range stored.Game.Pieces {
-		robotID := stored.Simulator.AddRobot(targetFleetPose(piece, stored.Game.BoardSize))
-		stored.Assignments.Assign(robotID, piece.ID)
+func loadState(filePath string) (state appState, err error) {
+	log.Printf("loading state from: %s", filePath)
+	file, err := os.Open(filePath)
+	if err != nil {
+		return
 	}
+	defer file.Close()
+	err = gob.NewDecoder(file).Decode(&state)
+	state.hydrate()
 	return
 }
 
-func (state *appState) ToStored() storedAppState {
-	simState, ok := state.FleetController.(*simulator.SimState)
-	if !ok {
-		log.Panic("fleet controller is not a simulator.SimState")
-	}
-	return storedAppState{
-		Version:     state.Version,
-		Game:        state.Game.ToStored(),
-		Robots:      state.Robots,
-		Assignments: state.Assignments,
-		Planner:     state.Planner,
-		Simulator:   *simState,
-		UpdatedAt:   state.UpdatedAt,
-	}
+// StateFromStored restores app state from disk. If ctrl is non-nil it is used
+// as the FleetController; otherwise the stored simulator state is used.
+func (state *appState) hydrate() {
+	state.fleetCmdChan = make(chan fleetapi.Command)
+	state.fleetEventChan = make(chan fleetapi.Event)
 }
 
-func StateFromStored(stored storedAppState) *appState {
-	state := appState{
-		Version:         stored.Version,
-		Game:            gameengine.GameFromStored(stored.Game),
-		Robots:          stored.Robots,
-		Assignments:     stored.Assignments,
-		Planner:         stored.Planner,
-		UpdatedAt:       stored.UpdatedAt,
-		fleetCmdChan:    make(chan fleetapi.RobotCommand),
-		robotUpdateChan: make(chan fleetapi.RobotUpdate),
-		FleetController: &stored.Simulator,
-	}
-
-	go state.FleetController.Run(
-		context.Background(), state.fleetCmdChan, state.robotUpdateChan,
-	)
-	return &state
-}
-
-func saveState(filePath string, stored storedAppState) error {
+func (state *appState) save(filePath string) error {
 	if filePath == "" {
 		return nil
 	}
@@ -150,18 +115,7 @@ func saveState(filePath string, stored storedAppState) error {
 		return err
 	}
 	defer file.Close()
-	return gob.NewEncoder(file).Encode(stored)
-}
-
-func loadState(filePath string) (stored storedAppState, err error) {
-	log.Printf("loading state from: %s", filePath)
-	file, err := os.Open(filePath)
-	if err != nil {
-		return
-	}
-	defer file.Close()
-	err = gob.NewDecoder(file).Decode(&stored)
-	return
+	return gob.NewEncoder(file).Encode(state)
 }
 
 // boardCellSizeMM is the physical size of one board square in millimetres.
@@ -217,7 +171,7 @@ func syncRobotGoals(state *appState) {
 		// TODO: Ensure that every robot always has a goal?
 		if currentGoal, exists := state.Planner.Goals[robotID]; !exists || currentGoal != newGoal {
 			state.Planner.Goals[robotID] = newGoal
-			state.fleetCmdChan <- fleetapi.RobotCommand{
+			state.fleetCmdChan <- fleetapi.SetTargetCommand{
 				RobotID:    robotID,
 				TargetPose: targetFleetPose(piece, state.Game.BoardSize),
 			}
@@ -259,10 +213,7 @@ func newStateManager() stateManager {
 
 // run is the state manager's main loop and must be called in its own goroutine.
 // publish is called synchronously after each successful state change.
-func (m *stateManager) run(initial storedAppState, broadcastChan chan<- sseEvent) {
-	state := StateFromStored(initial)
-	syncRobotGoals(state)
-
+func (m *stateManager) run(state *appState, broadcastChan chan<- sseEvent) {
 	for {
 		select {
 		case cmd, ok := <-m.cmds:
@@ -284,7 +235,7 @@ func (m *stateManager) run(initial storedAppState, broadcastChan chan<- sseEvent
 				c.reply <- struct{}{}
 
 			case applyMoveCmd:
-				if err := gameengine.ApplyMove(&state.Game, c.move); err != nil {
+				if err := state.Game.ApplyMove(c.move); err != nil {
 					c.reply <- err
 					continue
 				}
@@ -298,20 +249,75 @@ func (m *stateManager) run(initial storedAppState, broadcastChan chan<- sseEvent
 				c.reply <- buildAppSnapshot(state)
 
 			case saveCmd:
-				c.reply <- saveState(c.filePath, state.ToStored())
+				c.reply <- state.save(c.filePath)
 			}
-		case update := <-state.robotUpdateChan:
-			state.Robots[update.RobotID] = robotInfo{
-				Pose: Pose{
-					XMM:        update.CurrentPose.XMM,
-					YMM:        update.CurrentPose.YMM,
-					HeadingRad: update.CurrentPose.HeadingRad,
-				},
-				UpdatedAt: time.Now(),
+		case event := <-state.fleetEventChan:
+			switch event := event.(type) {
+			case fleetapi.RobotConnectedEvent:
+				if info, exists := state.Robots[event.RobotID]; exists {
+					state.fleetCmdChan <- fleetapi.SetPoseCommand{
+						RobotID: event.RobotID,
+						CurrentPose: fleetapi.Pose{
+							XMM:        info.Pose.XMM,
+							YMM:        info.Pose.YMM,
+							HeadingRad: info.Pose.HeadingRad,
+						},
+					}
+					// Clearing the goal is the easiest way to re-sync
+					delete(state.Planner.Goals, event.RobotID)
+					// TODO: Just sync goal for the new robot
+					syncRobotGoals(state)
+				} else {
+					piece, avail := state.nextUnassignedPiece()
+					if !avail {
+						log.Printf("no available piece for robot %s", event.RobotID)
+						continue
+					}
+					state.Assignments.Assign(event.RobotID, piece.ID)
+					curPose := targetFleetPose(*piece, state.Game.BoardSize)
+					state.fleetCmdChan <- fleetapi.SetPoseCommand{
+						RobotID:     event.RobotID,
+						CurrentPose: curPose,
+					}
+					state.Robots[event.RobotID] = robotInfo{
+						Pose: Pose{
+							XMM:        curPose.XMM,
+							YMM:        curPose.YMM,
+							HeadingRad: curPose.HeadingRad,
+						},
+						UpdatedAt: time.Now(),
+					}
+					// TODO: Just sync goal for the new robot
+					syncRobotGoals(state)
+					// TODO: New event type
+					broadcastChan <- sseEvent{name: "app.snapshot", data: buildAppSnapshot(state)}
+				}
+			case fleetapi.PoseUpdateEvent:
+				state.Robots[event.RobotID] = robotInfo{
+					Pose: Pose{
+						XMM:        event.CurrentPose.XMM,
+						YMM:        event.CurrentPose.YMM,
+						HeadingRad: event.CurrentPose.HeadingRad,
+					},
+					UpdatedAt: time.Now(),
+				}
+				broadcastChan <- sseEvent{name: "robot.updated", data: buildRobotSnapshot(state, event.RobotID)}
+			default:
+				log.Panic("Unknown event type:", event)
 			}
-			broadcastChan <- sseEvent{name: "robot.updated", data: buildRobotSnapshot(state, update.RobotID)}
 		}
 	}
+}
+
+func (state *appState) nextUnassignedPiece() (piece *gameengine.Piece, ok bool) {
+	// TODO: Track state to avoid looping?
+	for i := range state.Game.Pieces {
+		piece := &state.Game.Pieces[i]
+		if _, exists := state.Assignments.GetRobotIDByPieceID(piece.ID); !exists {
+			return piece, true
+		}
+	}
+	return nil, false
 }
 
 func (m *stateManager) newGame() {

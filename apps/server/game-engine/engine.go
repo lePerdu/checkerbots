@@ -1,8 +1,29 @@
 package gameengine
 
 import (
+	"maps"
 	"strconv"
 )
+
+// Game holds the rules-engine-owned game state.
+//
+// Board is included as an explicit future home for square occupancy, while Pieces
+// keeps the initial API simple and easy to evolve in subsequent tasks.
+type Game struct {
+	Turn      PlayerSide
+	BoardSize int
+	// CaptureColumns is the number of extra columns reserved on each side of
+	// the board for captured pieces: red's captured pieces sit in columns
+	// [BoardSize, BoardSize+CaptureColumns), black's sit in columns
+	// [-CaptureColumns, 0). See capturedPiecePosition in game-engine.
+	CaptureColumns int
+	Pieces         []Piece
+	MoveHistory    []Move
+	// nil if game is in-progress
+	Result *GameResult
+
+	legalMoves []Move
+}
 
 // TODO: Use 2d array? Track this in `Game` for easy lookups later?
 type boardCache map[Position]*Piece
@@ -46,13 +67,15 @@ func NewGame(config GameConfig) Game {
 		}
 	}
 
-	return GameFromStored(StoredGame{
+	game := Game{
 		Turn:           PlayerSideBlack,
 		BoardSize:      config.BoardSize,
 		CaptureColumns: config.CaptureColumns,
 		Pieces:         pieces,
 		MoveHistory:    []Move{},
-	})
+	}
+	game.computeLegalMoves()
+	return game
 }
 
 func NewGame8x8() Game {
@@ -63,14 +86,6 @@ func NewGame8x8() Game {
 	})
 }
 
-func GameFromStored(stored StoredGame) Game {
-	game := Game{
-		StoredGame: stored,
-	}
-	computeLegalMoves(&game)
-	return game
-}
-
 func makePieceID(side PlayerSide, index int) PieceID {
 	return PieceID(string(side) + "-" + strconv.Itoa(index+1))
 }
@@ -78,15 +93,15 @@ func makePieceID(side PlayerSide, index int) PieceID {
 // computeLegalMoves returns the legal moves for the current player.
 //
 // Jump and forced-capture rules are intentionally deferred to a later task.
-func computeLegalMoves(game *Game) {
-	game.LegalMoves = getJumpMoves(*game)
-	if len(game.LegalMoves) > 0 {
+func (game *Game) computeLegalMoves() {
+	game.legalMoves = getJumpMoves(*game)
+	if len(game.legalMoves) > 0 {
 		return
 	}
 
-	game.LegalMoves = getNonJumpMoves(*game)
-	if len(game.LegalMoves) == 0 {
-		game.GameOver = &GameOver{
+	game.legalMoves = getNonJumpMoves(*game)
+	if len(game.legalMoves) == 0 {
+		game.Result = &GameResult{
 			Winner: otherSide(game.Turn),
 			Reason: "No more moves!",
 		}
@@ -243,11 +258,7 @@ func getJumpMoves(game Game) []Move {
 }
 
 func copyBoardCache(board boardCache) boardCache {
-	copied := make(boardCache, len(board))
-	for pos, piece := range board {
-		copied[pos] = piece
-	}
-	return copied
+	return maps.Clone(board)
 }
 
 func moveDeltasForPiece(piece Piece) []Position {
@@ -281,20 +292,24 @@ func isInsideBoard(position Position, boardSize int) bool {
 	return position.Row >= 0 && position.Row < boardSize && position.Col >= 0 && position.Col < boardSize
 }
 
+func (game *Game) GetLegalMoves() []Move {
+	return game.legalMoves
+}
+
 // ApplyMove applies a legal move in place.
 //
 // It returns nil when the move was applied. Invalid moves return an
 // ApplyMoveError describing the reason. Simple diagonal moves and single-jump
 // captures are validated step-by-step below. Multi-jump sequences (moves with
 // more than 2 positions) are instead validated by matching them exactly
-// against game.LegalMoves, since that list already encodes all multi-jump
+// against game.legalMoves, since that list already encodes all multi-jump
 // rules (no double-capturing a piece, promotion ending a sequence, etc.) -
 // re-deriving those rules here would just duplicate computeLegalMoves.
-func ApplyMove(game *Game, move Move) *ApplyMoveError {
+func (game *Game) ApplyMove(move Move) *ApplyMoveError {
 	if game == nil {
 		return &ApplyMoveError{Reason: "game is nil"}
 	}
-	if game.GameOver != nil {
+	if game.Result != nil {
 		return &ApplyMoveError{Reason: "game is over"}
 	}
 	if len(move) < 2 {
@@ -363,7 +378,7 @@ func ApplyMove(game *Game, move Move) *ApplyMoveError {
 	game.Pieces = updatedPieces
 	game.Turn = otherSide(game.Turn)
 	game.MoveHistory = append(game.MoveHistory, append(Move(nil), move...))
-	computeLegalMoves(game)
+	game.computeLegalMoves()
 
 	return nil
 }
@@ -411,7 +426,7 @@ func capturedPiecePosition(i, boardSize, captureColumns int, side PlayerSide) Po
 // current player's precomputed legal moves.
 func applyMultiStepMove(game *Game, move Move) *ApplyMoveError {
 	var matched Move
-	for _, legalMove := range game.LegalMoves {
+	for _, legalMove := range game.legalMoves {
 		if movePathsEqual(legalMove, move) {
 			matched = legalMove
 			break
@@ -454,7 +469,7 @@ func applyMultiStepMove(game *Game, move Move) *ApplyMoveError {
 	game.Pieces = updatedPieces
 	game.Turn = otherSide(game.Turn)
 	game.MoveHistory = append(game.MoveHistory, append(Move(nil), matched...))
-	computeLegalMoves(game)
+	game.computeLegalMoves()
 
 	return nil
 }
