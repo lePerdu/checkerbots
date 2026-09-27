@@ -51,3 +51,14 @@ Level converters:
 Small, cheap ESP8266-based board with WiFi to serve as a bridge between the Roomba and the game server.
 
 Arduino Nano 33 boards I have work as well, they just have extra peripherals (IMU, Bluetooth, more GPIO) and are more expensive.
+
+
+## TODO
+
+### Roomba movement test
+
+- Simplified game engine
+  - Future: Make game rules more pluggable to easily support non-checkers games
+- Websocket fleet controller
+- Simulator as separate process (no collision detection)
+- Convert external sim to use Roomba OI

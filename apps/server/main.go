@@ -15,8 +15,10 @@ import (
 	"syscall"
 	"time"
 
+	"checkerbots/apps/server/fleetapi"
 	gameengine "checkerbots/apps/server/game-engine"
 	"checkerbots/apps/server/simulator"
+	wscontroller "checkerbots/apps/server/ws-controller"
 )
 
 //go:embed static/* templates/*
@@ -132,7 +134,16 @@ func main() {
 		state = makeInitialState()
 	}
 
-	fleetController := simulator.NewSimulator(len(state.Game.Pieces))
+	wsCtrl := wscontroller.NewController()
+
+	var fleetController fleetapi.FleetController
+	if os.Getenv("FLEET_CONTROLLER") == "ws" {
+		log.Printf("fleet controller: WebSocket (robots connect at /api/robots/ws)")
+		fleetController = wsCtrl
+	} else {
+		log.Printf("fleet controller: in-process simulator")
+		fleetController = simulator.NewSimulator(len(state.Game.Pieces))
+	}
 	go fleetController.Run(
 		context.Background(), state.fleetCmdChan, state.fleetEventChan,
 	)
@@ -140,28 +151,12 @@ func main() {
 	h := newSseHub()
 	go h.run()
 
-	// wsCtrl handles WebSocket connections from external robots and simulators.
-	// Set FLEET_CONTROLLER=ws to use it as the fleet controller instead of the
-	// in-process simulator. Robot piece assignments are not automatically
-	// populated in WS mode; robots must connect and be assigned externally.
-	// 	wsCtrl := wscontroller.NewController()
-	//
-	// 	var fleetCtrl fleetapi.FleetController
-	// 	if os.Getenv("FLEET_CONTROLLER") == "ws" {
-	// 		log.Printf("fleet controller: WebSocket (robots connect at /api/robots/ws)")
-	// 		// Clear stale robot state; WS robots re-register on connect.
-	// 		state.Robots = make(map[RobotID]robotInfo)
-	// 		fleetCtrl = wsCtrl
-	// 	} else {
-	// 		log.Printf("fleet controller: in-process simulator")
-	// 	}
-
 	mgr := newStateManager()
 	go mgr.run(&state, h.broadcast)
 
 	mux := http.NewServeMux()
 	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticFS))))
-	// mux.Handle("/api/robots/ws", wsCtrl)
+	mux.Handle("/api/robots/ws", wsCtrl)
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
