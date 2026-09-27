@@ -212,7 +212,8 @@ func (s *SimState) handleCommand(cmd fleetapi.Command) {
 	case fleetapi.SetPoseCommand:
 		entityID, exists := s.entityIDByRobotID[cmd.RobotID]
 		if !exists {
-			log.Panic("sim: unknown robot ID:", cmd.RobotID)
+			log.Print("sim: unknown robot ID:", cmd.RobotID)
+			return
 		}
 		entity := &s.entities[entityID]
 		// Manual pose setting shouldn't happen often, so don't bother diffing the pose
@@ -221,7 +222,8 @@ func (s *SimState) handleCommand(cmd fleetapi.Command) {
 	case fleetapi.SetTargetCommand:
 		entityID, exists := s.entityIDByRobotID[cmd.RobotID]
 		if !exists {
-			log.Panic("sim: unknown robot ID:", cmd.RobotID)
+			log.Print("sim: unknown robot ID:", cmd.RobotID)
+			return
 		}
 		s.entities[entityID].targetPose = poseFromFleetPose(cmd.TargetPose)
 	default:
