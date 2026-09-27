@@ -180,6 +180,10 @@ type HelloMessage struct {
 	DisplayName     string      `json:"display_name"`
 	SoftwareVersion string      `json:"software_version"`
 	Status          RobotStatus `json:"status"`
+	Pose            Pose        `json:"pose"`
+	// Whether Pose is remembered from a previous connection.
+	// TODO: Use PoseSource?
+	PoseValid bool `json:"pose_valid"`
 }
 
 // HeartbeatMessage is the periodic liveness message.

@@ -1,9 +1,5 @@
 package fleetapi
 
-import (
-	"context"
-)
-
 type RobotID string
 
 type Pose struct {
@@ -32,14 +28,12 @@ type SetTargetCommand struct {
 type Event any
 
 type RobotConnectedEvent struct {
-	RobotID RobotID
+	RobotID     RobotID
+	CurrentPose Pose
+	PoseValid   bool
 }
 
 type PoseUpdateEvent struct {
 	RobotID     RobotID
 	CurrentPose Pose
-}
-
-type FleetController interface {
-	Run(ctx context.Context, cmdChan <-chan Command, eventChan chan<- Event)
 }

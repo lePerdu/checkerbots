@@ -15,7 +15,6 @@ import (
 	"syscall"
 	"time"
 
-	"checkerbots/apps/server/fleetapi"
 	gameengine "checkerbots/apps/server/game-engine"
 	"checkerbots/apps/server/simulator"
 	wscontroller "checkerbots/apps/server/ws-controller"
@@ -133,20 +132,19 @@ func main() {
 		log.Printf("failed to load state: %v; using default state", err)
 		state = makeInitialState()
 	}
+	log.Printf("loaded state with %d pieces", len(state.Game.Pieces))
 
-	wsCtrl := wscontroller.NewController()
+	wsCtrl := wscontroller.NewController(state.fleetCmdChan, state.fleetEventChan)
 
-	var fleetController fleetapi.FleetController
-	if os.Getenv("FLEET_CONTROLLER") == "ws" {
+	if os.Getenv("FLEET_CONTROLLER") == "ws" || true {
 		log.Printf("fleet controller: WebSocket (robots connect at /api/robots/ws)")
-		fleetController = wsCtrl
+		go wsCtrl.Run(context.Background())
 	} else {
 		log.Printf("fleet controller: in-process simulator")
-		fleetController = simulator.NewSimulator(len(state.Game.Pieces))
+		simulator.NewSimulator(len(state.Game.Pieces)).Run(
+			context.Background(), state.fleetCmdChan, state.fleetEventChan,
+		)
 	}
-	go fleetController.Run(
-		context.Background(), state.fleetCmdChan, state.fleetEventChan,
-	)
 
 	h := newSseHub()
 	go h.run()

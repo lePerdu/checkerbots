@@ -3,7 +3,7 @@ package gameengine
 import "testing"
 
 func TestNewGameReturnsStandardStartingBoard(t *testing.T) {
-	game := NewGame8x8()
+	game := NewDefaultGame()
 
 	if game.Result != nil {
 		t.Fatalf("expected nil GameOver, got %#v", game.Result)
@@ -117,7 +117,7 @@ func TestNewGameReturnsStandardStartingBoard(t *testing.T) {
 }
 
 func TestGetLegalMovesReturnsSimpleOpeningMovesForBlack(t *testing.T) {
-	game := NewGame8x8()
+	game := NewDefaultGame()
 	moves := game.legalMoves
 
 	expected := []Move{
@@ -134,7 +134,7 @@ func TestGetLegalMovesReturnsSimpleOpeningMovesForBlack(t *testing.T) {
 }
 
 func TestGetLegalMovesReturnsSimpleMovesForRedTurn(t *testing.T) {
-	game := NewGame8x8()
+	game := NewDefaultGame()
 	game.Turn = PlayerSideRed
 	game.computeLegalMoves()
 
@@ -197,7 +197,7 @@ func TestGetLegalMovesIncludesBackwardMovesForKings(t *testing.T) {
 }
 
 func TestApplyMoveMovesPieceAndAdvancesTurn(t *testing.T) {
-	game := NewGame8x8()
+	game := NewDefaultGame()
 	move := Move{{Row: 2, Col: 0}, {Row: 3, Col: 1}}
 
 	err := game.ApplyMove(move)
@@ -367,7 +367,7 @@ func TestApplyMoveRejectsJumpOverOwnPiece(t *testing.T) {
 }
 
 func TestApplyMoveRejectsInvalidMove(t *testing.T) {
-	game := NewGame8x8()
+	game := NewDefaultGame()
 	move := Move{{Row: 0, Col: 0}, {Row: 1, Col: 1}}
 
 	err := game.ApplyMove(move)

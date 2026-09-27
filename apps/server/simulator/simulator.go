@@ -163,7 +163,11 @@ func (s *SimState) Run(
 	// - Updates for individual robots won't be sent until commands are processed
 	go func() {
 		for _, entity := range s.entities {
-			eventChan <- fleetapi.RobotConnectedEvent{RobotID: entity.robotID}
+			eventChan <- fleetapi.RobotConnectedEvent{
+				RobotID:     entity.robotID,
+				CurrentPose: fleetapi.Pose{},
+				PoseValid:   false,
+			}
 		}
 	}()
 

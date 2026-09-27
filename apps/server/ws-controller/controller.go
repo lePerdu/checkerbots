@@ -45,11 +45,18 @@ type registration struct {
 	robotID fleetapi.RobotID
 	// sendCh is how Run pushes commands into the robot's write goroutine.
 	sendCh chan<- fleetapi.Command
+	// Signals when registration is complete (or fails) and commands are routed to this connection.
+	ackCh chan<- registrationAck
+}
+
+type registrationAck struct {
+	ok bool
 }
 
 type connEntry struct {
 	robotID fleetapi.RobotID
-	sendCh  chan<- fleetapi.Command
+	// sendCh is how Run pushes commands into the robot's write goroutine.
+	sendCh chan<- fleetapi.Command
 }
 
 // Controller implements fleetapi.FleetController via WebSocket using robo-proto.
@@ -59,17 +66,18 @@ type Controller struct {
 	registerCh chan registration
 	// unregisterCh delivers connIDs of disconnected robots to Run.
 	unregisterCh chan connID
-	// robotEventCh carries robot-side events (pose updates, etc.) to Run.
-	robotEventCh chan fleetapi.Event
+	cmdChan      <-chan fleetapi.Command
+	eventChan    chan<- fleetapi.Event
 }
 
 // NewController returns a Controller ready to accept connections.
 // Call Run in a goroutine before (or shortly after) mounting ServeHTTP.
-func NewController() *Controller {
+func NewController(cmdChan <-chan fleetapi.Command, eventChan chan<- fleetapi.Event) *Controller {
 	return &Controller{
 		registerCh:   make(chan registration, 16),
 		unregisterCh: make(chan connID, 16),
-		robotEventCh: make(chan fleetapi.Event, 64),
+		cmdChan:      cmdChan,
+		eventChan:    eventChan,
 	}
 }
 
@@ -119,18 +127,45 @@ func (c *Controller) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// Per-connection command channel. Run writes to it; the write goroutine reads.
 	cmdCh := make(chan fleetapi.Command, 8)
+	registeredCh := make(chan registrationAck, 1)
 
 	// Register with Run. Buffered channel ensures this never blocks ServeHTTP.
-	c.registerCh <- registration{id: id, robotID: robotID, sendCh: cmdCh}
+	c.registerCh <- registration{
+		id: id, robotID: robotID,
+		sendCh: cmdCh,
+		ackCh:  registeredCh,
+	}
 	defer func() {
 		// Use a short timeout so cleanup isn't silently lost if Run has exited,
 		// but avoid blocking indefinitely on a cancelled request context.
+		// TODO: Is this necessary? Is there a better way to handle this?
 		select {
 		case c.unregisterCh <- id:
 		case <-time.After(5 * time.Second):
 			log.Printf("ws-controller: timeout sending unregister for conn %d (robot %q)", id, robotID)
 		}
 	}()
+
+	// Wait for ACK to start publishing events
+	select {
+	case ack := <-registeredCh:
+		if !ack.ok {
+			conn.Close(websocket.StatusPolicyViolation, "Robot ID already connected")
+			return
+		}
+	case <-ctx.Done():
+		return
+	}
+
+	c.eventChan <- fleetapi.RobotConnectedEvent{
+		RobotID: robotID,
+		CurrentPose: fleetapi.Pose{
+			XMM:        hello.Pose.XMM,
+			YMM:        hello.Pose.YMM,
+			HeadingRad: hello.Pose.HeadingRad,
+		},
+		PoseValid: hello.PoseValid,
+	}
 
 	// Write goroutine: converts fleet commands into robo-proto wire messages.
 	writeCtx, cancelWrite := context.WithCancel(ctx)
@@ -174,9 +209,9 @@ func (c *Controller) readLoop(ctx context.Context, conn *websocket.Conn, robotID
 				},
 			}
 			select {
-			case c.robotEventCh <- event:
-			default:
-				log.Printf("ws-controller: robot %q: event dropped (channel full)", robotID)
+			case c.eventChan <- event:
+			case <-ctx.Done():
+				return ctx.Err()
 			}
 		case roboproto.MessageTypeHeartbeat:
 			// Liveness only; no action needed.
@@ -207,6 +242,9 @@ func (c *Controller) writeLoop(ctx context.Context, conn *websocket.Conn, robotI
 			return
 		case cmd, ok := <-cmdCh:
 			if !ok {
+				// Closed cmdCh indicates server-initiated close
+				// TODO: Use separate chan or event to signal server-initiated close with reason info
+				conn.Close(websocket.StatusNormalClosure, "Closed by server")
 				return
 			}
 			var data []byte
@@ -256,6 +294,7 @@ func (c *Controller) writeLoop(ctx context.Context, conn *websocket.Conn, robotI
 			}
 			if err := conn.Write(ctx, websocket.MessageText, data); err != nil {
 				log.Printf("ws-controller: robot %q: write error: %v", robotID, err)
+				// TODO: Will a failed write close the socket or is an explicit unregister required?
 				return
 			}
 		}
@@ -267,12 +306,41 @@ func (c *Controller) writeLoop(ctx context.Context, conn *websocket.Conn, robotI
 // It routes incoming fleet commands (cmdChan) to connected robot sessions and
 // forwards robot events (pose updates, connect notifications) to the caller
 // (eventChan).
-func (c *Controller) Run(ctx context.Context, cmdChan <-chan fleetapi.Command, eventChan chan<- fleetapi.Event) {
+func (c *Controller) Run(ctx context.Context) {
 	// conns tracks all active connections keyed by their internal connID.
 	conns := make(map[connID]connEntry)
 	// robotRoute maps robot_id to the connID that currently handles it.
-	// Last-connected robot wins when the same robot_id reconnects.
+	// First-connected robot wins when the same robot ID reconnects.
 	robotRoute := make(map[fleetapi.RobotID]connID)
+
+	// Ensure all connections are finished before returning so that extra
+	// unexpected events aren't published to eventChan
+	defer func() {
+		for _, conn := range conns {
+			close(conn.sendCh)
+		}
+
+		for {
+			select {
+			case reg := <-c.registerCh:
+				log.Printf("ws-controller: controller exiting, dropping new connection")
+				reg.ackCh <- registrationAck{false}
+			case id := <-c.unregisterCh:
+				entry, ok := conns[id]
+				if !ok {
+					continue
+				}
+				close(entry.sendCh)
+				delete(conns, id)
+				// Only clear routing if this connID is still the active one for this robot;
+				// a newer connection may have already taken over.
+				if robotRoute[entry.robotID] == id {
+					delete(robotRoute, entry.robotID)
+				}
+				log.Printf("ws-controller: unregistered robot %q (conn=%d, %d connected)", entry.robotID, id, len(conns))
+			}
+		}
+	}()
 
 	for {
 		select {
@@ -281,14 +349,14 @@ func (c *Controller) Run(ctx context.Context, cmdChan <-chan fleetapi.Command, e
 
 		case reg := <-c.registerCh:
 			conns[reg.id] = connEntry{robotID: reg.robotID, sendCh: reg.sendCh}
+			if _, exists := robotRoute[reg.robotID]; exists {
+				log.Printf("ws-controller: robot %q already connected, dropping new connection", reg.robotID)
+				reg.ackCh <- registrationAck{false}
+				continue
+			}
 			robotRoute[reg.robotID] = reg.id
 			log.Printf("ws-controller: registered robot %q (conn=%d, %d connected)", reg.robotID, reg.id, len(conns))
-			// Notify the state manager so it can assign a piece and set up state.
-			select {
-			case eventChan <- fleetapi.RobotConnectedEvent{RobotID: reg.robotID}:
-			case <-ctx.Done():
-				return
-			}
+			reg.ackCh <- registrationAck{true}
 
 		case id := <-c.unregisterCh:
 			entry, ok := conns[id]
@@ -304,15 +372,7 @@ func (c *Controller) Run(ctx context.Context, cmdChan <-chan fleetapi.Command, e
 			}
 			log.Printf("ws-controller: unregistered robot %q (conn=%d, %d connected)", entry.robotID, id, len(conns))
 
-		case event := <-c.robotEventCh:
-			// Forward robot-side events to the state manager.
-			select {
-			case eventChan <- event:
-			case <-ctx.Done():
-				return
-			}
-
-		case cmd, ok := <-cmdChan:
+		case cmd, ok := <-c.cmdChan:
 			if !ok {
 				return
 			}
@@ -335,6 +395,7 @@ func (c *Controller) Run(ctx context.Context, cmdChan <-chan fleetapi.Command, e
 			case conns[id].sendCh <- cmd:
 			default:
 				log.Printf("ws-controller: robot %q command channel full, dropping", robotID)
+				// TODO: Close the connection immediately here?
 			}
 		}
 	}

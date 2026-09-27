@@ -71,7 +71,7 @@ type robotGoal struct {
 
 func makeInitialState() appState {
 	state := appState{
-		Game:   gameengine.NewGame8x8(),
+		Game:   gameengine.NewDefaultGame(),
 		Robots: make(map[RobotID]robotInfo),
 		Assignments: pieceAssignmentState{
 			RobotIDByPieceID: make(map[gameengine.PieceID]RobotID),
@@ -101,6 +101,7 @@ func loadState(filePath string) (state appState, err error) {
 // StateFromStored restores app state from disk. If ctrl is non-nil it is used
 // as the FleetController; otherwise the stored simulator state is used.
 func (state *appState) hydrate() {
+	state.Game.Hydrate()
 	state.fleetCmdChan = make(chan fleetapi.Command)
 	state.fleetEventChan = make(chan fleetapi.Event)
 }
@@ -222,12 +223,8 @@ func (m *stateManager) run(state *appState, broadcastChan chan<- sseEvent) {
 			}
 			switch c := cmd.(type) {
 			case newGameCmd:
-				state.Game = gameengine.NewGame8x8()
-				// TODO: Handle when game piece count changes
-				if len(state.Game.Pieces) != len(state.Robots) {
-					log.Panicf("piece/robot count mismatch: %d != %d", len(state.Game.Pieces), len(state.Robots))
-				}
-
+				state.Game = gameengine.NewDefaultGame()
+				// TODO: Handle when game piece IDs change. Clear and (randomly) re-assign?
 				state.Version++
 				state.UpdatedAt = time.Now()
 				syncRobotGoals(state)
@@ -255,18 +252,24 @@ func (m *stateManager) run(state *appState, broadcastChan chan<- sseEvent) {
 			switch event := event.(type) {
 			case fleetapi.RobotConnectedEvent:
 				if info, exists := state.Robots[event.RobotID]; exists {
-					state.fleetCmdChan <- fleetapi.SetPoseCommand{
-						RobotID: event.RobotID,
-						CurrentPose: fleetapi.Pose{
-							XMM:        info.Pose.XMM,
-							YMM:        info.Pose.YMM,
-							HeadingRad: info.Pose.HeadingRad,
-						},
+					if event.PoseValid {
+						// Use remembered pose
+						state.handleRobotPoseUpdate(broadcastChan, event.RobotID, event.CurrentPose)
+					} else {
+						// Set based on last-known state in server
+						state.fleetCmdChan <- fleetapi.SetPoseCommand{
+							RobotID: event.RobotID,
+							CurrentPose: fleetapi.Pose{
+								XMM:        info.Pose.XMM,
+								YMM:        info.Pose.YMM,
+								HeadingRad: info.Pose.HeadingRad,
+							},
+						}
+						// Clearing the goal is the easiest way to re-sync
+						delete(state.Planner.Goals, event.RobotID)
+						// TODO: Just sync goal for the new robot
+						syncRobotGoals(state)
 					}
-					// Clearing the goal is the easiest way to re-sync
-					delete(state.Planner.Goals, event.RobotID)
-					// TODO: Just sync goal for the new robot
-					syncRobotGoals(state)
 				} else {
 					piece, avail := state.nextUnassignedPiece()
 					if !avail {
@@ -274,16 +277,24 @@ func (m *stateManager) run(state *appState, broadcastChan chan<- sseEvent) {
 						continue
 					}
 					state.Assignments.Assign(event.RobotID, piece.ID)
-					curPose := targetFleetPose(*piece, state.Game.BoardSize)
-					state.fleetCmdChan <- fleetapi.SetPoseCommand{
-						RobotID:     event.RobotID,
-						CurrentPose: curPose,
+
+					var initialPose fleetapi.Pose
+					if event.PoseValid {
+						initialPose = event.CurrentPose
+					} else {
+						// Set based on assigned piece
+						initialPose = targetFleetPose(*piece, state.Game.BoardSize)
+						state.fleetCmdChan <- fleetapi.SetPoseCommand{
+							RobotID:     event.RobotID,
+							CurrentPose: initialPose,
+						}
 					}
+
 					state.Robots[event.RobotID] = robotInfo{
 						Pose: Pose{
-							XMM:        curPose.XMM,
-							YMM:        curPose.YMM,
-							HeadingRad: curPose.HeadingRad,
+							XMM:        initialPose.XMM,
+							YMM:        initialPose.YMM,
+							HeadingRad: initialPose.HeadingRad,
 						},
 						UpdatedAt: time.Now(),
 					}
@@ -293,20 +304,24 @@ func (m *stateManager) run(state *appState, broadcastChan chan<- sseEvent) {
 					broadcastChan <- sseEvent{name: "app.snapshot", data: buildAppSnapshot(state)}
 				}
 			case fleetapi.PoseUpdateEvent:
-				state.Robots[event.RobotID] = robotInfo{
-					Pose: Pose{
-						XMM:        event.CurrentPose.XMM,
-						YMM:        event.CurrentPose.YMM,
-						HeadingRad: event.CurrentPose.HeadingRad,
-					},
-					UpdatedAt: time.Now(),
-				}
-				broadcastChan <- sseEvent{name: "robot.updated", data: buildRobotSnapshot(state, event.RobotID)}
+				state.handleRobotPoseUpdate(broadcastChan, event.RobotID, event.CurrentPose)
 			default:
 				log.Panic("Unknown event type:", event)
 			}
 		}
 	}
+}
+
+func (state *appState) handleRobotPoseUpdate(broadcastChan chan<- sseEvent, robotID RobotID, pose fleetapi.Pose) {
+	state.Robots[robotID] = robotInfo{
+		Pose: Pose{
+			XMM:        pose.XMM,
+			YMM:        pose.YMM,
+			HeadingRad: pose.HeadingRad,
+		},
+		UpdatedAt: time.Now(),
+	}
+	broadcastChan <- sseEvent{name: "robot.updated", data: buildRobotSnapshot(state, robotID)}
 }
 
 func (state *appState) nextUnassignedPiece() (piece *gameengine.Piece, ok bool) {

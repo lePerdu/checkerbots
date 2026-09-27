@@ -74,16 +74,20 @@ func NewGame(config GameConfig) Game {
 		Pieces:         pieces,
 		MoveHistory:    []Move{},
 	}
-	game.computeLegalMoves()
+	game.Hydrate()
 	return game
 }
 
-func NewGame8x8() Game {
+func NewDefaultGame() Game {
 	return NewGame(GameConfig{
 		BoardSize:      8,
 		InitialRows:    3,
 		CaptureColumns: 2,
 	})
+}
+
+func (game *Game) Hydrate() {
+	game.computeLegalMoves()
 }
 
 func makePieceID(side PlayerSide, index int) PieceID {
@@ -94,12 +98,12 @@ func makePieceID(side PlayerSide, index int) PieceID {
 //
 // Jump and forced-capture rules are intentionally deferred to a later task.
 func (game *Game) computeLegalMoves() {
-	game.legalMoves = getJumpMoves(*game)
+	game.legalMoves = game.getJumpMoves()
 	if len(game.legalMoves) > 0 {
 		return
 	}
 
-	game.legalMoves = getNonJumpMoves(*game)
+	game.legalMoves = game.getNonJumpMoves()
 	if len(game.legalMoves) == 0 {
 		game.Result = &GameResult{
 			Winner: otherSide(game.Turn),
@@ -108,7 +112,7 @@ func (game *Game) computeLegalMoves() {
 	}
 }
 
-func getNonJumpMoves(game Game) []Move {
+func (game *Game) getNonJumpMoves() []Move {
 	occupied := map[Position]bool{}
 	for _, piece := range game.Pieces {
 		if piece.Captured {
@@ -142,7 +146,7 @@ func getNonJumpMoves(game Game) []Move {
 	return moves
 }
 
-func getBoardCache(game Game) boardCache {
+func (game *Game) getBoardCache() boardCache {
 	return getBoardCacheFromPieces(game.Pieces)
 }
 
@@ -165,7 +169,7 @@ type jumpStep struct {
 	Dest Position
 }
 
-func getJumpStepsFrom(game Game, board boardCache, side PlayerSide, kind PieceKind, position Position, captured map[Position]bool) []jumpStep {
+func (game *Game) getJumpStepsFrom(board boardCache, side PlayerSide, kind PieceKind, position Position, captured map[Position]bool) []jumpStep {
 	// TODO: Pre-allocate capacity of 2 (4 for king) since that's the most a piece can every have?
 	steps := []jumpStep{}
 	for _, delta := range moveDeltasFor(side, kind) {
@@ -209,8 +213,8 @@ func getJumpStepsFrom(game Game, board boardCache, side PlayerSide, kind PieceKi
 // A sequence stops as soon as a man reaches its promotion row - it can't
 // keep jumping in the same turn. A piece that starts (or already became) a
 // king isn't affected by the promotion row and keeps jumping normally.
-func getJumpSequences(game Game, board boardCache, side PlayerSide, kind PieceKind, position Position, captured map[Position]bool, path Move) []Move {
-	steps := getJumpStepsFrom(game, board, side, kind, position, captured)
+func (game *Game) getJumpSequences(board boardCache, side PlayerSide, kind PieceKind, position Position, captured map[Position]bool, path Move) []Move {
+	steps := game.getJumpStepsFrom(board, side, kind, position, captured)
 	if len(steps) == 0 {
 		if len(path) > 1 {
 			return []Move{append(Move{}, path...)}
@@ -234,13 +238,13 @@ func getJumpSequences(game Game, board boardCache, side PlayerSide, kind PieceKi
 			continue
 		}
 
-		moves = append(moves, getJumpSequences(game, board, side, kind, step.Dest, newCaptured, newPath)...)
+		moves = append(moves, game.getJumpSequences(board, side, kind, step.Dest, newCaptured, newPath)...)
 	}
 	return moves
 }
 
-func getJumpMoves(game Game) []Move {
-	board := getBoardCache(game)
+func (game *Game) getJumpMoves() []Move {
+	board := game.getBoardCache()
 	moves := []Move{}
 	for _, piece := range game.Pieces {
 		if piece.Captured || piece.Side != game.Turn {
@@ -250,7 +254,7 @@ func getJumpMoves(game Game) []Move {
 		movingBoard := copyBoardCache(board)
 		delete(movingBoard, piece.Position)
 
-		sequences := getJumpSequences(game, movingBoard, piece.Side, piece.Kind, piece.Position, map[Position]bool{}, Move{piece.Position})
+		sequences := game.getJumpSequences(movingBoard, piece.Side, piece.Kind, piece.Position, map[Position]bool{}, Move{piece.Position})
 		moves = append(moves, sequences...)
 	}
 
