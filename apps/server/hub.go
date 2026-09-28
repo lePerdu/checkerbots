@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"log"
 )
@@ -45,10 +46,15 @@ func newSseHub() sseHub {
 }
 
 // run is the hub's main loop and must be called in its own goroutine.
-func (h *sseHub) run() {
+func (h *sseHub) run(ctx context.Context) {
 	clients := map[chan []byte]struct{}{}
 	for {
 		select {
+		case <-ctx.Done():
+			for ch := range clients {
+				close(ch)
+			}
+			return
 		case ch := <-h.register:
 			clients[ch] = struct{}{}
 		case ch := <-h.unregister:
@@ -57,6 +63,10 @@ func (h *sseHub) run() {
 				close(ch)
 			}
 		case event := <-h.broadcast:
+			if len(clients) == 0 {
+				// Skip encoding if there are no clients
+				continue
+			}
 			msg, err := encodeSSEEvent(event)
 			if err != nil {
 				log.Printf("hub: encode SSE event %q: %v", event.name, err)

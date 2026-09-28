@@ -8,10 +8,12 @@ import (
 	"html/template"
 	"io/fs"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"path"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -134,29 +136,52 @@ func main() {
 	}
 	log.Printf("loaded state with %d pieces", len(state.Game.Pieces))
 
-	wsCtrl := wscontroller.NewController(state.fleetCmdChan, state.fleetEventChan)
+	appCtx, stopApp := context.WithCancel(context.Background())
 
-	if os.Getenv("FLEET_CONTROLLER") == "ws" || true {
-		log.Printf("fleet controller: WebSocket (robots connect at /api/robots/ws)")
-		go wsCtrl.Run(context.Background())
-	} else {
+	// Store this to determine the exit code later
+	var terminatingSignalNum atomic.Int32
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(sigCh)
+
+	go func() {
+		sig := <-sigCh
+		signal.Stop(sigCh)
+
+		if sigNum, hasSigNum := sig.(syscall.Signal); hasSigNum {
+			terminatingSignalNum.Store(int32(sigNum))
+		} else {
+			log.Printf("unknown signal number: %v", sig)
+			terminatingSignalNum.Store(-1)
+		}
+		log.Printf("received signal: %v", sig)
+		stopApp()
+	}()
+
+	wsCtrl := wscontroller.NewController(state.fleetCmdChan, state.fleetEventChan)
+	log.Printf("fleet controller: WebSocket (robots connect at /api/robots/ws)")
+	// TODO: Take different context / Background to use explicit shutdown message?
+	go wsCtrl.Run(appCtx)
+
+	if false {
 		log.Printf("fleet controller: in-process simulator")
 		simulator.NewSimulator(len(state.Game.Pieces)).Run(
-			context.Background(), state.fleetCmdChan, state.fleetEventChan,
+			appCtx, state.fleetCmdChan, state.fleetEventChan,
 		)
 	}
 
 	h := newSseHub()
-	go h.run()
+	// TODO: Take different context / Background to use explicit shutdown message?
+	go h.run(appCtx)
 
 	mgr := newStateManager()
+	// TODO: Take context?
 	go mgr.run(&state, h.broadcast)
 
-	mux := http.NewServeMux()
-	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticFS))))
-	mux.Handle("/api/robots/ws", wsCtrl)
+	http.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticFS))))
+	http.Handle("/api/robots/ws", wsCtrl)
 
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
 			http.NotFound(w, r)
 			return
@@ -171,21 +196,21 @@ func main() {
 		}
 	})
 
-	mux.HandleFunc("GET /api/state", func(w http.ResponseWriter, r *http.Request) {
+	http.HandleFunc("GET /api/state", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		if err := json.NewEncoder(w).Encode(mgr.getSnapshot()); err != nil {
 			log.Printf("encode state response: %v", err)
 		}
 	})
 
-	mux.HandleFunc("GET /api/board", func(w http.ResponseWriter, r *http.Request) {
+	http.HandleFunc("GET /api/board", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		if err := json.NewEncoder(w).Encode(mgr.getSnapshot().Game); err != nil {
 			log.Printf("encode board response: %v", err)
 		}
 	})
 
-	mux.HandleFunc("POST /api/moves", func(w http.ResponseWriter, r *http.Request) {
+	http.HandleFunc("POST /api/moves", func(w http.ResponseWriter, r *http.Request) {
 		var req applyMoveRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			writeJSONError(w, http.StatusBadRequest, "bad_request", "invalid request body")
@@ -206,12 +231,12 @@ func main() {
 		w.WriteHeader(http.StatusNoContent)
 	})
 
-	mux.HandleFunc("POST /api/new-game", func(w http.ResponseWriter, r *http.Request) {
+	http.HandleFunc("POST /api/new-game", func(w http.ResponseWriter, r *http.Request) {
 		mgr.newGame()
 		w.WriteHeader(http.StatusNoContent)
 	})
 
-	mux.HandleFunc("/api/events", func(w http.ResponseWriter, r *http.Request) {
+	http.HandleFunc("/api/events", func(w http.ResponseWriter, r *http.Request) {
 		log.Printf("/api/events: client connected")
 		flusher, ok := w.(http.Flusher)
 		if !ok {
@@ -270,29 +295,50 @@ func main() {
 		addr = ":" + value
 	}
 
+	// Doesn't inherit from appCtx since this context is only cancelled as a
+	// fallback in case requests aren't finished gracefully
+	ongoingRequestCtx, cancelOngoingRequestCtx := context.WithCancel(context.Background())
 	server := &http.Server{
-		Addr:    addr,
-		Handler: mux,
+		Addr:        addr,
+		BaseContext: func(net.Listener) context.Context { return ongoingRequestCtx },
 	}
+	server.RegisterOnShutdown(func() {
+		// TODO: Close SSE connections
+	})
+	server.RegisterOnShutdown(func() {
+		// TODO: Close WS connections
+	})
 
-	interruptChan := make(chan os.Signal, 1)
-	signal.Notify(interruptChan, os.Interrupt, syscall.SIGTERM)
 	go func() {
-		sig := <-interruptChan
-		log.Printf("signal received (%s); saving state before exit", sig)
-		if err := mgr.save(statePath); err != nil {
-			log.Printf("save state: %v", err)
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if err := server.Shutdown(ctx); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Printf("server shutdown: %v", err)
+		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Panicf("server listen error: %v", err)
 		}
 	}()
 
-	log.Printf("server listening on %s", addr)
-	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		log.Fatal(err)
+	<-appCtx.Done()
+
+	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancelShutdown()
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		cancelOngoingRequestCtx()
+		log.Printf("graceful server shutdown error: %v", err)
+		// Give some time for requests to finish
+		time.Sleep(5 * time.Second)
+	}
+
+	// TODO:
+	// - Wait for ws-controller shutdown
+
+	// TODO: Do these need to be atomic?
+	if err := mgr.save(statePath); err != nil {
+		log.Printf("error saving state: %v", err)
+	}
+	mgr.shutdown()
+
+	if sigNum := terminatingSignalNum.Load(); sigNum == 0 {
+		os.Exit(0)
+	} else {
+		os.Exit(128 + int(sigNum))
 	}
 }
 

@@ -185,21 +185,25 @@ func syncRobotGoals(state *appState) {
 // Commands sent to the state manager goroutine.
 
 type newGameCmd struct {
-	reply chan struct{}
+	reply chan<- struct{}
 }
 
 type applyMoveCmd struct {
 	move  gameengine.Move
-	reply chan *gameengine.ApplyMoveError
+	reply chan<- *gameengine.ApplyMoveError
 }
 
 type getSnapshotCmd struct {
-	reply chan AppSnapshot
+	reply chan<- AppSnapshot
 }
 
 type saveCmd struct {
 	filePath string
-	reply    chan error
+	reply    chan<- error
+}
+
+type shutdownCmd struct {
+	reply chan<- struct{}
 }
 
 // stateManager serializes all reads and writes to appState.
@@ -217,10 +221,7 @@ func newStateManager() stateManager {
 func (m *stateManager) run(state *appState, broadcastChan chan<- sseEvent) {
 	for {
 		select {
-		case cmd, ok := <-m.cmds:
-			if !ok {
-				return
-			}
+		case cmd := <-m.cmds:
 			switch c := cmd.(type) {
 			case newGameCmd:
 				state.Game = gameengine.NewDefaultGame()
@@ -247,6 +248,14 @@ func (m *stateManager) run(state *appState, broadcastChan chan<- sseEvent) {
 
 			case saveCmd:
 				c.reply <- state.save(c.filePath)
+
+			case shutdownCmd:
+				close(state.fleetCmdChan)
+				c.reply <- struct{}{}
+				return
+
+			default:
+				log.Panicf("unknown state manager command: %v", cmd)
 			}
 		case event := <-state.fleetEventChan:
 			switch event := event.(type) {
@@ -357,4 +366,11 @@ func (m *stateManager) save(filePath string) error {
 	reply := make(chan error, 1)
 	m.cmds <- saveCmd{filePath: filePath, reply: reply}
 	return <-reply
+}
+
+func (m *stateManager) shutdown() {
+	reply := make(chan struct{}, 1)
+	m.cmds <- shutdownCmd{reply: reply}
+	close(m.cmds)
+	<-reply
 }
